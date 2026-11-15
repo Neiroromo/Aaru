@@ -172,7 +172,7 @@ mod platform {
         let _ = SHARED.set(shared.clone());
         std::thread::spawn(move || unsafe {
             let instance = GetModuleHandleW(None).unwrap_or_default();
-            let class = w!("IrminsulMapOverlay");
+            let class = w!("AaruMapOverlay");
             let window_class = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 lpfnWndProc: Some(procedure),
@@ -185,7 +185,7 @@ mod platform {
             let hwnd = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
                 class,
-                w!("Irminsul map"),
+                w!("Aaru map"),
                 WS_POPUP,
                 rect[0],
                 rect[1],

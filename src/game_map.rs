@@ -59,6 +59,12 @@ struct Shared {
     /// Counts what was found, to see it change.
     version: AtomicU64,
     started: AtomicBool,
+    /// The way the camera looks is wanted (read from the minimap while the big map is not
+    /// open).
+    want_camera: AtomicBool,
+    /// The way the camera looks (as the game tells the way a character faces), and when it was
+    /// read.
+    camera: Mutex<Option<(f32, Instant)>>,
 }
 
 pub use window::MarksWindow;
@@ -115,6 +121,19 @@ impl GameMap {
         self.shared.version.load(Ordering::Relaxed)
     }
 
+    /// Asks for the way the camera looks to be read from the minimap (or not), and says where
+    /// the minimap is.
+    pub fn want_camera(&self, wanted: bool) {
+        self.shared.want_camera.store(wanted, Ordering::Relaxed);
+    }
+
+    /// The way the camera looks, in the way the game tells where a character faces (0 along z,
+    /// 90 along x), if it was read a moment ago.
+    pub fn camera_bearing(&self) -> Option<f32> {
+        let camera = self.shared.camera.lock().ok()?;
+        camera.filter(|(_, at)| at.elapsed() < Duration::from_millis(1500)).map(|(bearing, _)| bearing)
+    }
+
     /// Shows a picture (see `map_render::render_marks`) over the game, at a place of the
     /// screen as big as the picture.
     pub fn show(&mut self, rect: [i32; 4], picture: &[u8]) {
@@ -163,6 +182,21 @@ fn watch_game(shared: Arc<Shared>, ctx: egui::Context) {
     let mut just_opened = false;
     let mut tries = 0u32;
     let mut retried = Instant::now();
+    // The small picture of the last screen the place was found on, to see whether the screen
+    // changed since: if it did not, the place is the same and nothing needs to be worked out.
+    let mut last_small: Option<map_sync::Gray> = None;
+    let mut capturer = capture::Capturer::default();
+    // The camera, read from the minimap while the big map is not open.
+    let mut follower = crate::camera_dir::Follower::default();
+    // How many readings in a row were made from a part of the window only: now and then all of
+    // it is looked at, to see that the big map is not open.
+    let mut fast_cycles = 0u32;
+    // The size of the window of the game, and when the camera was last said to the program.
+    let mut client: Option<(usize, usize)> = None;
+    let mut told_at = Instant::now();
+    let mut told: Option<f32> = None;
+    // The last picture of the game, kept for when the window did not change.
+    let mut kept: Option<capture::Frame> = None;
     loop {
         if !shared.watch.load(Ordering::Relaxed) {
             last = None;
@@ -173,9 +207,70 @@ fn watch_game(shared: Arc<Shared>, ctx: egui::Context) {
             std::thread::sleep(Duration::from_millis(400));
             continue;
         }
-        let Some(frame) = capture::game() else {
+        // The camera, quickly: a part of the window with the minimap in it, many times a second,
+        // while the big map is known to be closed.
+        if shared.want_camera.load(Ordering::Relaxed)
+            && closed >= 4
+            && fast_cycles < 12
+            && let Some((_, window_height)) = client
+        {
+            let h = window_height as f32;
+            let region = [(0.01 * h) as usize, (0.01 * h) as usize, (0.36 * h) as usize, (0.26 * h) as usize];
+            match capturer.region(region) {
+                Some(capture::Grab::Same) => {
+                    std::thread::sleep(Duration::from_millis(4));
+                    continue;
+                }
+                Some(capture::Grab::New(part)) => {
+                    let picture = crate::camera_dir::Picture { pixels: &part.pixels, width: part.width, height: part.height, step: 4, rgb: [2, 1, 0] };
+                    let reading = crate::camera_dir::read_auto(&picture, [0, 0, part.width, part.height], crate::camera_dir::MINIMAP_RADIUS * h);
+                    if reading.is_some() {
+                        fast_cycles += 1;
+                        let bearing = follower.take(reading, Instant::now());
+                        if let Ok(mut camera) = shared.camera.lock() {
+                            *camera = bearing.map(|bearing| (bearing, Instant::now()));
+                        }
+                        // The program is told of a turn at once (it draws when told).
+                        let turned = match (bearing, told) {
+                            (Some(now), Some(before)) => ((now - before + 540.).rem_euclid(360.) - 180.).abs() >= 1.5,
+                            (None, None) => false,
+                            _ => true,
+                        };
+                        if turned || told_at.elapsed() >= Duration::from_millis(150) {
+                            told = bearing;
+                            told_at = Instant::now();
+                            ctx.request_repaint();
+                        }
+                        std::thread::sleep(Duration::from_millis(7));
+                        continue;
+                    }
+                    // No arrow of the player there: the minimap is gone (the map was opened,
+                    // a menu) and all of the window is looked at.
+                    fast_cycles = u32::MAX;
+                }
+                None => fast_cycles = u32::MAX,
+            }
+        }
+        fast_cycles = 0;
+        let grab = capturer.game();
+        let frame = match grab {
+            Some(capture::Grab::New(frame)) => {
+                client = Some((frame.width, frame.height));
+                kept = Some(frame);
+                kept.as_ref()
+            }
+            // Nothing changed in the window: what was worked out stays as it is.
+            Some(capture::Grab::Same) if kept.is_some() && (last.is_some() || closed >= 4) => {
+                std::thread::sleep(Duration::from_millis(30));
+                continue;
+            }
+            Some(capture::Grab::Same) => kept.as_ref(),
+            None => None,
+        };
+        let Some(frame) = frame else {
             // Another window is in front for now: the view is kept for when the game is
             // back, its map may still be open as it was.
+            kept = None;
             steady = 0;
             if let Ok(mut rect) = shared.rect.lock() {
                 *rect = None;
@@ -188,6 +283,19 @@ fn watch_game(shared: Arc<Shared>, ctx: egui::Context) {
             *rect = Some(frame.rect);
         }
         if !map_sync::map_open(&frame.pixels, frame.width, frame.height, 4, [2, 1, 0]) {
+            // The camera: the way the lighter wedge of the minimap points.
+            let wanted = shared.want_camera.load(Ordering::Relaxed);
+            if wanted {
+                let height = frame.height as f32;
+                let picture = crate::camera_dir::Picture { pixels: &frame.pixels, width: frame.width, height: frame.height, step: 4, rgb: [2, 1, 0] };
+                // The minimap is in the top left corner, wherever exactly.
+                let search = [(0.01 * height) as usize, (0.01 * height) as usize, (0.36 * height) as usize, (0.26 * height) as usize];
+                let reading = crate::camera_dir::read_auto(&picture, search, crate::camera_dir::MINIMAP_RADIUS * height);
+                let bearing = follower.take(reading, Instant::now());
+                if let Ok(mut camera) = shared.camera.lock() {
+                    *camera = bearing.map(|bearing| (bearing, Instant::now()));
+                }
+            }
             // One picture without the map is not the map closed (the game coming to the
             // front, something passing over it).
             closed += 1;
@@ -202,7 +310,7 @@ fn watch_game(shared: Arc<Shared>, ctx: egui::Context) {
                 let status = *shared.status.lock().unwrap_or_else(|e| e.into_inner());
                 set(&shared, &ctx, None, if status == Status::Following { Status::Looking } else { status });
             }
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(Duration::from_millis(if wanted { 45 } else { 100 }));
             continue;
         }
         if closed >= 4 {
@@ -233,6 +341,16 @@ fn watch_game(shared: Arc<Shared>, ctx: egui::Context) {
         if retried.elapsed() >= Duration::from_secs(5) {
             retried = Instant::now();
             ground.retry_missing();
+        }
+        // Nothing moved on the screen (the map stands, the markers are shown): the place is as
+        // it was, which is told without looking for it, and the next look is a little later.
+        let small = Shot::small_of(&frame.pixels, frame.width, frame.height, 4, [2, 1, 0]);
+        if let (Some(view), Some(before)) = (last, last_small.as_ref())
+            && steady >= 2
+            && map_sync::difference(before, &small) < 0.6
+        {
+            std::thread::sleep(Duration::from_millis(160));
+            continue;
         }
         let shot = Shot::new(&frame.pixels, frame.width, frame.height, 4, [2, 1, 0]);
         let player = shared.player.lock().ok().and_then(|player| *player);
@@ -271,6 +389,7 @@ fn watch_game(shared: Arc<Shared>, ctx: egui::Context) {
                 }
                 steady = if same { steady + 1 } else { 0 };
                 last = Some(found.view);
+                last_small = Some(small);
                 if steady >= 1 {
                     set(&shared, &ctx, Some(Synced { view: found.view, rect: frame.rect, score: found.score }), Status::Following);
                 } else {
@@ -294,6 +413,8 @@ fn watch_game(shared: Arc<Shared>, ctx: egui::Context) {
 }
 
 mod capture {
+    use std::time::{Duration, Instant};
+
     /// A picture of what is inside the window of the game: blue, green, red and one more
     /// byte for each place, row by row from the top.
     pub struct Frame {
@@ -304,10 +425,163 @@ mod capture {
         pub rect: [i32; 4],
     }
 
-    /// The window of the game, if the game is in front.  What the program itself draws over
-    /// the game is not in the picture.
+    /// What a look at the game gave.
+    pub enum Grab {
+        /// A picture.
+        New(Frame),
+        /// The window did not change since the last picture.
+        Same,
+    }
+
+    /// How the pictures are taken: with Windows Graphics Capture where it works (the picture
+    /// is made by the graphics card, of the window alone, and only copied when wanted: a few
+    /// thousandths of a second), and by copying the screen with GDI where it does not (some
+    /// seconds are tried again later).
+    #[derive(Default)]
+    pub struct Capturer {
+        #[cfg(windows)]
+        wgc: Option<crate::window_capture::WindowCapture>,
+        /// Not before this is Windows Graphics Capture tried (again).
+        #[cfg(windows)]
+        wgc_after: Option<Instant>,
+        /// Pictures in a row that were all black (a window that is not drawn into the
+        /// capture, as some full screen modes): after some, GDI is used.
+        #[cfg(windows)]
+        black: u32,
+        /// Which way the last picture was taken, for telling.
+        pub way: &'static str,
+    }
+
+    impl Capturer {
+        /// The window of the game, if the game is in front.
+        pub fn game(&mut self) -> Option<Grab> {
+            if crate::overlay::what_is_in_front() != crate::hotkey::FRONT_GAME {
+                // Another window is in front: the capture is let go (it is made again, in a
+                // moment, when the game is back).
+                #[cfg(windows)]
+                {
+                    self.wgc = None;
+                }
+                return None;
+            }
+            #[cfg(windows)]
+            {
+                if let Some(grab) = self.windows_capture() {
+                    return Some(grab);
+                }
+                self.way = "GDI";
+                gdi()
+            }
+            #[cfg(not(windows))]
+            {
+                None
+            }
+        }
+
+        /// Only a part of the window of the game (x, y, width, height from its top left), where
+        /// the capture with Windows Graphics Capture is on: it is much less work than all of it.
+        pub fn region(&mut self, region: [usize; 4]) -> Option<Grab> {
+            #[cfg(windows)]
+            {
+                if crate::overlay::what_is_in_front() != crate::hotkey::FRONT_GAME {
+                    self.wgc = None;
+                    return None;
+                }
+                let capture = self.wgc.as_mut()?;
+                match capture.grab_region(region) {
+                    Ok(Some(picture)) => Some(Grab::New(Frame {
+                        pixels: picture.pixels,
+                        width: picture.width,
+                        height: picture.height,
+                        rect: [picture.origin[0], picture.origin[1], picture.width as i32, picture.height as i32],
+                    })),
+                    Ok(None) => Some(Grab::Same),
+                    Err(e) => {
+                        tracing::warn!("Windows Graphics Capture stopped: {e:#}");
+                        self.wgc = None;
+                        self.wgc_after = Some(Instant::now() + Duration::from_secs(20));
+                        None
+                    }
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = region;
+                None
+            }
+        }
+
+        #[cfg(windows)]
+        fn windows_capture(&mut self) -> Option<Grab> {
+            use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+            if self.wgc_after.is_some_and(|after| Instant::now() < after) {
+                return None;
+            }
+            let hwnd = unsafe { GetForegroundWindow() };
+            if hwnd.0.is_null() {
+                return None;
+            }
+            if self.wgc.as_ref().is_some_and(|capture| capture.hwnd() != hwnd.0 as isize) {
+                self.wgc = None;
+            }
+            if self.wgc.is_none() {
+                match crate::window_capture::WindowCapture::new(hwnd) {
+                    Ok(capture) => {
+                        tracing::info!("the window of the game is captured with Windows Graphics Capture");
+                        self.wgc = Some(capture);
+                        self.black = 0;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Windows Graphics Capture is not used: {e:#}");
+                        self.wgc_after = Some(Instant::now() + Duration::from_secs(60));
+                        return None;
+                    }
+                }
+            }
+            let picture = match self.wgc.as_mut()?.grab() {
+                Ok(Some(picture)) => picture,
+                Ok(None) => {
+                    self.way = "Windows Graphics Capture";
+                    return Some(Grab::Same);
+                }
+                Err(e) => {
+                    tracing::warn!("Windows Graphics Capture stopped: {e:#}");
+                    self.wgc = None;
+                    self.wgc_after = Some(Instant::now() + Duration::from_secs(20));
+                    return None;
+                }
+            };
+            let (width, height) = (picture.width, picture.height);
+            if width < 640 || height < 360 || width > 8192 || height > 8192 {
+                return None;
+            }
+            // A picture of nothing but black is of a window that is not captured.
+            let dark = (0..64).all(|n| {
+                let at = ((n * 7919) % (width * height)) * 4;
+                picture.pixels[at] < 6 && picture.pixels[at + 1] < 6 && picture.pixels[at + 2] < 6
+            });
+            self.black = if dark { self.black + 1 } else { 0 };
+            if self.black >= 30 {
+                tracing::warn!("Windows Graphics Capture gives only black: the screen is copied instead");
+                self.wgc = None;
+                self.wgc_after = Some(Instant::now() + Duration::from_secs(120));
+                return None;
+            }
+            self.way = "Windows Graphics Capture";
+            Some(Grab::New(Frame {
+                pixels: picture.pixels,
+                width,
+                height,
+                rect: [picture.origin[0], picture.origin[1], width as i32, height as i32],
+            }))
+        }
+    }
+
+    /// The window of the game by copying the screen.  What the program itself draws over the
+    /// game is not in the picture, but windows of others over it are.
     #[cfg(windows)]
-    pub fn game() -> Option<Frame> {
+    fn gdi() -> Option<Grab> {
         use windows::Win32::Foundation::{POINT, RECT};
         use windows::Win32::Graphics::Gdi::{
             BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, ClientToScreen, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
@@ -315,9 +589,6 @@ mod capture {
         };
         use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetForegroundWindow};
 
-        if crate::overlay::what_is_in_front() != crate::hotkey::FRONT_GAME {
-            return None;
-        }
         unsafe {
             let window = GetForegroundWindow();
             let mut client = RECT::default();
@@ -361,7 +632,7 @@ mod capture {
                     });
                     SelectObject(memory, old);
                     let _ = DeleteObject(bitmap.into());
-                    frame
+                    frame.map(Grab::New)
                 }
                 _ => None,
             };
@@ -369,11 +640,6 @@ mod capture {
             ReleaseDC(None, screen);
             result
         }
-    }
-
-    #[cfg(not(windows))]
-    pub fn game() -> Option<Frame> {
-        None
     }
 }
 
@@ -424,7 +690,7 @@ mod window {
             let made = hwnd.clone();
             std::thread::spawn(move || unsafe {
                 let instance = GetModuleHandleW(None).unwrap_or_default();
-                let class = w!("IrminsulGameMapMarks");
+                let class = w!("AaruGameMapMarks");
                 let window_class = WNDCLASSEXW {
                     cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                     lpfnWndProc: Some(procedure),
@@ -436,7 +702,7 @@ mod window {
                 let window = CreateWindowExW(
                     WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
                     class,
-                    w!("Irminsul markers"),
+                    w!("Aaru markers"),
                     WS_POPUP,
                     0,
                     0,

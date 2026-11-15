@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::{AppState, Message, State};
 
-/// Whether Irminsul checks for and offers new versions of itself.  Off in this
+/// Whether Aaru checks for and offers new versions of itself.  Off in this
 /// fork: the releases it would look at are the original repository's, and
 /// installing one would replace this fork's changes with the original's.
 const APP_UPDATE_CHECK_ENABLED: bool = false;

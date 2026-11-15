@@ -3,14 +3,14 @@
 //! what upgrades cost, and the numbers that grow with levels.
 //!
 //! The file this is read from is made by `examples/gen_upgrade_data.rs` from
-//! the same data files the rest of Irminsul takes its names from.  This file
+//! the same data files the rest of Aaru takes its names from.  This file
 //! holds only the types and the calculations, so that example can use it too.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// A name in the languages Irminsul shows.
+/// A name in the languages Aaru shows.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Text {
     pub en: String,

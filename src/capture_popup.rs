@@ -1,7 +1,7 @@
 //! A small window that slides down from the top of the screen when the game
 //! starts loading, and shows how far capturing the game's data has come.
 //!
-//! It is a window of its own, so it can show over the game while Irminsul's
+//! It is a window of its own, so it can show over the game while Aaru's
 //! main window is hidden: always on top, never takes the focus, and lets mouse
 //! clicks through.
 
@@ -228,13 +228,13 @@ impl CapturePopup {
         // The window comes into being by the call below, so it can be rounded
         // from the next frame on.  It is checked every frame, so that the
         // corners stay cut whatever the window does.
-        window_visibility::round_window("Irminsul capture", CORNER_RADIUS, &mut self.region);
+        window_visibility::round_window("Aaru capture", CORNER_RADIUS, &mut self.region);
 
         let x = (Self::screen_width(ctx) - WIDTH) / 2.;
         ctx.show_viewport_immediate(
             ViewportId::from_hash_of("capture_popup"),
             ViewportBuilder::default()
-                .with_title("Irminsul capture")
+                .with_title("Aaru capture")
                 .with_inner_size([WIDTH, HEIGHT])
                 .with_position([x, y])
                 .with_decorations(false)

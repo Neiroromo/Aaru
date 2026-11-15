@@ -1,6 +1,6 @@
 [package]
-name = "irminsul"
-version = "0.4.0"
+name = "aaru"
+version = "0.5.0"
 authors = ["Konkers <konkers@konkers.net>"]
 edition = "2024"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml", "src/data/*.json"]
@@ -22,6 +22,7 @@ tokio = { version = "1.47.1", features = [
 ] }
 
 ab_glyph = "0.2"
+rayon = "1.10"
 anyhow = "1.0.99"
 async-trait = "0.1.92"
 async-watcher = "0.3.0"
@@ -79,6 +80,18 @@ windows = { version = "0.61.3", features = [
 	"Win32_System_Registry",
 	"Win32_System_Threading",
 	"Win32_Graphics_Gdi",
+	"Graphics_Capture",
+	"Graphics_DirectX",
+	"Graphics_DirectX_Direct3D11",
+	"Win32_Graphics_Direct3D",
+	"Win32_Graphics_Direct3D11",
+	"Win32_Graphics_Dwm",
+	"Win32_Graphics_Dxgi",
+	"Win32_Graphics_Dxgi_Common",
+	"Win32_System_WinRT",
+	"Win32_System_WinRT_Direct3D11",
+	"Win32_System_WinRT_Graphics_Capture",
+	"Foundation",
 	"Win32_UI_HiDpi",
 	"Win32_UI_Shell",
 	"Win32_UI_WindowsAndMessaging",
@@ -111,7 +124,13 @@ pcap = ["dep:pcap"]
 static-libpcap = ["pcap"]
 
 [profile.release]
-opt-level = 2 # fast and small wasm
+# Speed first: the heavy work is the matching of the screen to the map and the search for the
+# key, which are loops over numbers.  Whole-program optimization and one unit of code give the
+# compiler the most to work with.  `panic = "abort"` is NOT used: the decoder of the packets is
+# run under `catch_unwind` so that a bad packet resets it instead of ending the program.
+opt-level = 3
+lto = "thin"
+codegen-units = 1
 
 # Optimize all dependencies even in debug builds:
 [profile.dev.package."*"]

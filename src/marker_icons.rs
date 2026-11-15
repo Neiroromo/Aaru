@@ -166,7 +166,7 @@ async fn worker(
     size: Option<u32>,
 ) {
     let client = match reqwest::Client::builder()
-        .user_agent("Irminsul")
+        .user_agent("Aaru")
         .timeout(Duration::from_secs(30))
         .build()
     {

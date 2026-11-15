@@ -38,7 +38,7 @@ const CORNER_RADIUS: f32 = 16.;
 /// How long a line stays after its last change.
 const HOLD: Duration = Duration::from_secs(5);
 const SLIDE: Duration = Duration::from_millis(260);
-const TITLE: &str = "Irminsul changes";
+const TITLE: &str = "Aaru changes";
 
 const CARD: Color32 = Color32::from_rgb(22, 25, 44);
 const GAIN: Color32 = Color32::from_rgb(0x4a, 0xde, 0x80);

@@ -32,7 +32,7 @@ const GAME_CHECK: Duration = Duration::from_secs(3);
 /// How many are turned into textures in a frame.
 const PER_FRAME: usize = 12;
 /// More textures than this and those not used lately are let go.
-const KEEP: usize = 500;
+const KEEP: usize = 240;
 
 const INFO_URL: &str = "https://sg-public-api-static.hoyolab.com/common/map_user/ys_obc/v1/map/info";
 const TILE_URL: &str = "https://act-webstatic.mihoyo.com/ys-map-op/map";
@@ -480,7 +480,7 @@ impl MapTiles {
         if arrived == PER_FRAME {
             self.ctx.request_repaint();
         }
-        if state.images.len() > 300 {
+        if state.images.len() > 160 {
             // The finer ones come again from the disk as they are looked at.
             state.images.retain(|key, _| key.level >= 3);
             let State {
@@ -529,7 +529,7 @@ async fn worker(
     ctx: Context,
 ) {
     let client = match reqwest::Client::builder()
-        .user_agent("Irminsul")
+        .user_agent("Aaru")
         .timeout(Duration::from_secs(30))
         .build()
     {

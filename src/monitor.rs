@@ -459,6 +459,15 @@ impl Monitor {
     fn chests_in_view(&mut self, gadgets: &[auto_artifactarium::SceneGadget]) {
         self.chests_for_session();
         self.take_census(gadgets);
+        // How high the ground is where things were put in view (for saying a marker is higher
+        // or lower than the player).
+        if let Some(scene) = self.scenes.scene_now() {
+            for gadget in gadgets {
+                if let Some(position) = gadget.position {
+                    crate::heights::add(scene, position);
+                }
+            }
+        }
         // What a monster drops tells that it was killed.
         let killed = self.mobs.drops(gadgets, &crate::markers::data());
         if !killed.is_empty() {
@@ -1039,6 +1048,7 @@ impl Monitor {
                         }
                         _ => 0,
                     };
+                    crate::heights::add(location.scene, location.position);
                     // An enemy marker walked by with no enemy sent there is defeated.
                     self.mobs.player_at(location.scene, location.position, &crate::markers::data());
                     self.publish_mobs();
@@ -1104,6 +1114,11 @@ impl Monitor {
             // Monsters that came into view (the ones alive).
             if let Some(monsters) = guarded("monsters in view", || matches_monsters_in_view(&command)) {
                 let scene = self.scenes.scene_now().unwrap_or(3);
+                for monster in &monsters {
+                    if let Some(position) = monster.position {
+                        crate::heights::add(scene, position);
+                    }
+                }
                 self.mobs.saw(scene, &monsters, &crate::markers::data());
                 self.publish_mobs();
                 self.publish_chest_marks();

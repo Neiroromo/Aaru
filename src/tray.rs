@@ -1,4 +1,4 @@
-//! The notification area icon, which keeps Irminsul reachable while its
+//! The notification area icon, which keeps Aaru reachable while its
 //! window is hidden.
 
 #[derive(Clone, Copy, Debug)]
@@ -59,7 +59,7 @@ mod windows_tray {
                 eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon-256.png")[..])?;
             let icon = Icon::from_rgba(icon.rgba, icon.width, icon.height)?;
 
-            let open = MenuItem::new("Open Irminsul", true, None);
+            let open = MenuItem::new("Open Aaru", true, None);
             let quit = MenuItem::new("Quit", true, None);
             let menu = Menu::new();
             menu.append(&open)?;
@@ -95,7 +95,7 @@ mod windows_tray {
 
             let icon = TrayIconBuilder::new()
                 .with_icon(icon)
-                .with_tooltip("Irminsul")
+                .with_tooltip("Aaru")
                 .with_menu(Box::new(menu))
                 .with_menu_on_left_click(false)
                 .build()?;

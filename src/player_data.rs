@@ -268,7 +268,7 @@ impl PlayerData {
         let mut good = good::Good {
             format: "GOOD".to_string(),
             version: 3,
-            source: "Irminsul".to_string(),
+            source: "Aaru".to_string(),
             characters: Vec::new(),
             artifacts: Vec::new(),
             weapons: Vec::new(),

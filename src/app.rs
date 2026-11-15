@@ -141,7 +141,7 @@ enum OptimizerExportTarget {
     File,
 }
 
-pub struct IrminsulApp {
+pub struct AaruApp {
     ui_message_tx: mpsc::UnboundedSender<Message>,
     state_rx: watch::Receiver<AppState>,
     wish_url_rx: watch::Receiver<Option<String>>,
@@ -205,11 +205,11 @@ pub struct IrminsulApp {
 }
 
 trait ToastError<T> {
-    fn toast_error(self, app: &mut IrminsulApp) -> Option<T>;
+    fn toast_error(self, app: &mut AaruApp) -> Option<T>;
 }
 
 impl<T, E: Display> ToastError<T> for std::result::Result<T, E> {
-    fn toast_error(self, app: &mut IrminsulApp) -> Option<T> {
+    fn toast_error(self, app: &mut AaruApp) -> Option<T> {
         match self {
             Ok(val) => Some(val),
             Err(e) => {
@@ -288,7 +288,7 @@ fn start_async_runtime(
     (ui_message_tx, state_rx, wish_url_rx)
 }
 
-impl IrminsulApp {
+impl AaruApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         mut tracing_reload_handle: ReloadHandle,
@@ -392,7 +392,7 @@ impl IrminsulApp {
     }
 }
 
-impl eframe::App for IrminsulApp {
+impl eframe::App for AaruApp {
     /// Called by the framework to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, &self.saved_state);
@@ -554,7 +554,7 @@ impl eframe::App for IrminsulApp {
                 ViewportId::from_hash_of("power_tools_window"),
                 {
                     let builder = ViewportBuilder::default()
-                        .with_title("Irminsul Power Tools")
+                        .with_title("Aaru Power Tools")
                         .with_inner_size([560., 760.])
                         .with_min_inner_size([420., 320.]);
                     if self.saved_state.power_tools_on_top {
@@ -617,7 +617,7 @@ impl eframe::App for IrminsulApp {
     }
 }
 
-impl IrminsulApp {
+impl AaruApp {
     /// The data in use came from another account: show the marks of that one.
     fn follow_profile(&mut self) {
         let uid = self.state_rx.borrow().profile.as_ref().map(|profile| profile.uid);
@@ -854,7 +854,7 @@ impl IrminsulApp {
 
     fn checking_for_update_ui(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("Checking for Irminsul updates".to_string());
+            ui.label("Checking for Aaru updates".to_string());
         });
     }
 
@@ -885,7 +885,7 @@ impl IrminsulApp {
         });
     }
 
-    /// Relaunch Irminsul and close this instance.
+    /// Relaunch Aaru and close this instance.
     ///
     /// Uses the executable's own path rather than argv[0], which may be a bare
     /// name that only resolves through PATH, or be relative to a directory we
@@ -895,7 +895,7 @@ impl IrminsulApp {
             Ok(exe_path) => {
                 let _ = std::process::Command::new(exe_path).spawn();
             }
-            Err(e) => tracing::error!("unable to find Irminsul to restart it: {e}"),
+            Err(e) => tracing::error!("unable to find Aaru to restart it: {e}"),
         }
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         self.restarting = true;
@@ -923,7 +923,7 @@ impl IrminsulApp {
         let exe_path = admin::current_exe_path();
         let command = admin::setcap_command(&exe_path);
 
-        ui.label("Updated.  The update reset Irminsul's packet capture");
+        ui.label("Updated.  The update reset Aaru's packet capture");
         ui.label("permissions.  Re-grant them with:");
         ui.add_space(5.0);
         ui.label(&command);
@@ -951,7 +951,7 @@ impl IrminsulApp {
         confirmation_type: ConfirmationType,
     ) {
         let label = match confirmation_type {
-            ConfirmationType::Initial => "Irminsul needs to download initial data",
+            ConfirmationType::Initial => "Aaru needs to download initial data",
             ConfirmationType::Update => "New data available",
         };
         ui.label(label.to_string());
@@ -1623,7 +1623,7 @@ impl IrminsulApp {
         ui.separator();
         ui.checkbox(
             &mut self.saved_state.auto_start_capture,
-            "Start capture on Irminsul launch",
+            "Start capture on Aaru launch",
         );
         ui.checkbox(
             &mut self.saved_state.show_capture_popup,
@@ -1667,7 +1667,7 @@ impl IrminsulApp {
             if ui
                 .checkbox(&mut autostart, "Start with Windows, hidden in the tray")
                 .on_hover_text(
-                    "Starts Irminsul in the tray when you log on and captures right away, \
+                    "Starts Aaru in the tray when you log on and captures right away, \
                      so it sees the game connect. Needs administrator rights.",
                 )
                 .changed()

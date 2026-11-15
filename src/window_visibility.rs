@@ -33,7 +33,7 @@ pub fn set_visible(visible: bool) {
 
     VISIBLE.store(visible, Ordering::Relaxed);
 
-    let hwnd: HWND = match unsafe { FindWindowW(PCWSTR::null(), w!("Irminsul")) } {
+    let hwnd: HWND = match unsafe { FindWindowW(PCWSTR::null(), w!("Aaru")) } {
         Ok(hwnd) => hwnd,
         Err(e) => {
             tracing::warn!("unable to find the main window: {e}");

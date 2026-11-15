@@ -83,7 +83,7 @@ impl Covers {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
                 return;
             };
-            let Ok(client) = reqwest::Client::builder().user_agent("Irminsul").timeout(Duration::from_secs(30)).build() else {
+            let Ok(client) = reqwest::Client::builder().user_agent("Aaru").timeout(Duration::from_secs(30)).build() else {
                 return;
             };
             while let Ok(url) = request_rx.recv() {

@@ -17,7 +17,7 @@ use std::sync::{Mutex, OnceLock};
 use chrono::Local;
 
 /// What the background log takes, whatever the level chosen for the usual log is.
-pub const FILTER: &str = "warn,irminsul=debug,timeline=info";
+pub const FILTER: &str = "warn,aaru=debug,timeline=info";
 /// The target of the lines of the debug timeline.
 pub const TIMELINE: &str = "timeline";
 
@@ -98,7 +98,7 @@ pub fn start() {
     };
     let _ = writeln!(
         file,
-        "Irminsul {} background log, started {}",
+        "Aaru {} background log, started {}",
         env!("CARGO_PKG_VERSION"),
         Local::now().to_rfc3339()
     );

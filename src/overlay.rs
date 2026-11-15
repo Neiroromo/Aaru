@@ -24,7 +24,7 @@ use crate::planner_tab::{Family, chain_top, family_percent};
 use crate::roster_tab::{BAD, Cell, MORA, OK, compact, item_cell, paint_cell_scaled};
 use crate::upgrade_store;
 
-const TITLE: &str = "Irminsul overlay";
+const TITLE: &str = "Aaru overlay";
 const CARD: Color32 = Color32::from_rgb(22, 25, 44);
 const STRIP_FILL: Color32 = Color32::from_rgb(14, 16, 30);
 /// How big a picture is meant to be before scaling.
@@ -68,7 +68,7 @@ pub struct OverlaySettings {
     #[serde(default = "default_one")]
     pub text_scale: f32,
     /// Shown only while Genshin Impact is the window in front: not over
-    /// Irminsul or any other window.
+    /// Aaru or any other window.
     #[serde(default)]
     pub only_in_focus: bool,
 }
@@ -320,7 +320,7 @@ impl Overlay {
         ctx.show_viewport_immediate(
             ViewportId::from_hash_of("overlay_choice_window"),
             ViewportBuilder::default()
-                .with_title("Irminsul floating window")
+                .with_title("Aaru floating window")
                 .with_inner_size([500., 680.])
                 .with_min_inner_size([380., 360.]),
             |ctx, _class| {

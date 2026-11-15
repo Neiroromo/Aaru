@@ -528,7 +528,7 @@ fn period(
 
 async fn fetch_and_keep() -> Result<()> {
     let client = reqwest::Client::builder()
-        .user_agent("Irminsul")
+        .user_agent("Aaru")
         .timeout(Duration::from_secs(60))
         .build()?;
     let list = |lang: &str| format!("{API}/getAnnList?{QUERY}&lang={lang}");

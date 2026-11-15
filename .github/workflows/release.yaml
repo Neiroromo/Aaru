@@ -31,12 +31,12 @@ jobs:
           toml set Cargo.toml package.version ${{inputs.nextVersion}} > Cargo.toml.new
           rm Cargo.toml
           mv Cargo.toml.new Cargo.toml
-          cargo update --package irminsul
+          cargo update --package aaru
       - name: Commit version bump locally
         id: bump
         run: |
-          git config user.name "irminsul bot"
-          git config user.email "irminsul.bot@users.noreply.github.com"
+          git config user.name "aaru bot"
+          git config user.email "aaru.bot@users.noreply.github.com"
           git add Cargo.toml
           git add Cargo.lock
           git commit -m "[skip ci] bump version to ${{inputs.nextVersion}}"
@@ -79,20 +79,20 @@ jobs:
           git checkout ${{ needs.prepare.outputs.sha }}
       - run: cargo build --release --locked
       - name: Copy binary with platform suffix
-        # irminsul-legacy-x64.exe exists purely to be the first asset in the
+        # aaru-legacy-x64.exe exists purely to be the first asset in the
         # release.  Updaters up to 0.1.19 match assets against an empty target
         # string, which matches everything, so they install whichever asset
         # comes first.
         run: |
-          cp target/release/irminsul.exe target/release/irminsul-windows-x64.exe
-          cp target/release/irminsul.exe target/release/irminsul-legacy-x64.exe
+          cp target/release/aaru.exe target/release/aaru-windows-x64.exe
+          cp target/release/aaru.exe target/release/aaru-legacy-x64.exe
       - uses: actions/upload-artifact@v6
         with:
-          name: irminsul-windows
+          name: aaru-windows
           path: |
-            target/release/irminsul.exe
-            target/release/irminsul-windows-x64.exe
-            target/release/irminsul-legacy-x64.exe
+            target/release/aaru.exe
+            target/release/aaru-windows-x64.exe
+            target/release/aaru-legacy-x64.exe
 
   build-linux:
     # Pinned to 22.04 rather than ubuntu-latest to keep the glibc requirement
@@ -123,11 +123,11 @@ jobs:
       - run: cargo build --release --features pcap,static-libpcap --locked
       - name: Copy binary with platform suffix
         run: |
-          cp target/release/irminsul target/release/irminsul-linux-x64
+          cp target/release/aaru target/release/aaru-linux-x64
       - uses: actions/upload-artifact@v6
         with:
-          name: irminsul-linux
-          path: target/release/irminsul-linux-x64
+          name: aaru-linux
+          path: target/release/aaru-linux-x64
 
   build-macos:
     runs-on: macos-latest
@@ -154,11 +154,11 @@ jobs:
           git checkout ${{ needs.prepare.outputs.sha }}
       - run: cargo build --release --features pcap --locked
       - name: Copy binary with platform suffix
-        run: cp target/release/irminsul target/release/irminsul-macos-arm64
+        run: cp target/release/aaru target/release/aaru-macos-arm64
       - uses: actions/upload-artifact@v6
         with:
-          name: irminsul-macos
-          path: target/release/irminsul-macos-arm64
+          name: aaru-macos
+          path: target/release/aaru-macos-arm64
 
   # Create the release:
   # * Push release commit to both main and the release tag
@@ -176,7 +176,7 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@v7
         with:
-          pattern: irminsul-*
+          pattern: aaru-*
           merge-multiple: true
           path: ./
       - name: Push the version bump and tag the release
@@ -192,8 +192,8 @@ jobs:
           name: "v${{inputs.nextVersion}}"
           commit: ${{ needs.prepare.outputs.sha }}
           artifacts: |
-            irminsul-legacy-x64.exe
-            irminsul-macos-arm64
-            irminsul-windows-x64.exe
-            irminsul.exe
-            irminsul-linux-x64
+            aaru-legacy-x64.exe
+            aaru-macos-arm64
+            aaru-windows-x64.exe
+            aaru.exe
+            aaru-linux-x64

@@ -1,9 +1,9 @@
-//! Starting Irminsul when the user logs on to Windows.
+//! Starting Aaru when the user logs on to Windows.
 //!
-//! This is a scheduled task rather than a Run key entry: Irminsul needs
+//! This is a scheduled task rather than a Run key entry: Aaru needs
 //! administrator rights to capture packets, and a task with the highest run
 //! level starts elevated without a UAC prompt.  Changing it needs the same
-//! rights, which Irminsul has unless it was started with `--no-admin`.
+//! rights, which Aaru has unless it was started with `--no-admin`.
 
 #[cfg(windows)]
 mod imp {
@@ -13,7 +13,7 @@ mod imp {
 
     use anyhow::{Context, Result, anyhow};
 
-    const TASK_NAME: &str = "Irminsul";
+    const TASK_NAME: &str = "Aaru";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     fn schtasks(args: &[&str]) -> Result<Output> {
@@ -33,7 +33,7 @@ mod imp {
     }
 
     fn task_xml() -> Result<String> {
-        let exe = std::env::current_exe().context("unable to find the Irminsul executable")?;
+        let exe = std::env::current_exe().context("unable to find the Aaru executable")?;
         let dir = exe.parent().map(|dir| dir.to_string_lossy().into_owned());
         let user = format!(
             "{}\\{}",
@@ -45,7 +45,7 @@ mod imp {
             r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Starts Irminsul in the tray when you log on.</Description>
+    <Description>Starts Aaru in the tray when you log on.</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -97,6 +97,28 @@ mod imp {
         anyhow!("{what}: {message}")
     }
 
+    /// The name the startup task had when the program was called Irminsul.
+    const OLD_TASK_NAME: &str = "Irminsul";
+
+    /// If the task of the old name is there, it is removed and one of the new name (of this
+    /// executable) takes its place.  Changing tasks needs the rights of an administrator: if
+    /// they are not there, it is tried again at the next start.
+    pub fn migrate_old_task() {
+        let old_there = schtasks(&["/Query", "/TN", OLD_TASK_NAME]).map(|output| output.status.success()).unwrap_or(false);
+        if !old_there {
+            return;
+        }
+        let created = if is_enabled() { Ok(()) } else { set_enabled(true) };
+        match created {
+            Ok(()) => match schtasks(&["/Delete", "/TN", OLD_TASK_NAME, "/F"]) {
+                Ok(output) if output.status.success() => tracing::info!("the startup task of Irminsul was replaced by one of Aaru"),
+                Ok(output) => tracing::warn!("the old startup task could not be removed: {}", failure("schtasks", &output)),
+                Err(e) => tracing::warn!("the old startup task could not be removed: {e}"),
+            },
+            Err(e) => tracing::warn!("the startup task could not be moved to the new name: {e}"),
+        }
+    }
+
     pub fn is_enabled() -> bool {
         schtasks(&["/Query", "/TN", TASK_NAME])
             .map(|output| output.status.success())
@@ -119,7 +141,7 @@ mod imp {
         for unit in std::ffi::OsString::from(xml).encode_wide() {
             bytes.extend_from_slice(&unit.to_le_bytes());
         }
-        let path = std::env::temp_dir().join("irminsul-startup-task.xml");
+        let path = std::env::temp_dir().join("aaru-startup-task.xml");
         std::fs::write(&path, bytes).context("unable to write the task definition")?;
 
         let output = schtasks(&[
@@ -141,7 +163,10 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::{is_enabled, set_enabled};
+pub use imp::{is_enabled, migrate_old_task, set_enabled};
+
+#[cfg(not(windows))]
+pub fn migrate_old_task() {}
 
 #[cfg(not(windows))]
 pub fn is_enabled() -> bool {

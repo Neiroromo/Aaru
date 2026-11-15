@@ -81,10 +81,10 @@ pub fn current_exe_path() -> String {
     std::env::current_exe()
         .ok()
         .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or("./irminsul".to_owned())
+        .unwrap_or("./aaru".to_owned())
 }
 
-/// The command that grants Irminsul permission to capture packets.
+/// The command that grants Aaru permission to capture packets.
 ///
 /// Shared by the missing permissions dialog and the post update prompt so the
 /// two can't drift apart.
@@ -138,7 +138,7 @@ fn show_packet_capture_permissions_missing_dialog() {
     let exe_path = current_exe_path();
 
     let _ = eframe::run_simple_native(
-        "Irminsul requires packet capture permissions",
+        "Aaru requires packet capture permissions",
         options,
         move |ctx, _frame| {
             egui::CentralPanel::default().show(ctx, |ui| {
@@ -147,7 +147,7 @@ fn show_packet_capture_permissions_missing_dialog() {
                     ui.add_space(5.0);
                     #[cfg(target_os = "linux")]
                     {
-                        ui.label("1. Grant CAP_NET_RAW to Irminsul (after every update):");
+                        ui.label("1. Grant CAP_NET_RAW to Aaru (after every update):");
                         ui.label(format!(
                             "{} && '{}'",
                             setcap_command(&exe_path),
@@ -161,10 +161,10 @@ fn show_packet_capture_permissions_missing_dialog() {
                         ui.label("sudo chmod 644 /dev/bpf*");
                     }
                     ui.add_space(5.0);
-                    ui.label("2. Run Irminsul as root (every time):");
+                    ui.label("2. Run Aaru as root (every time):");
                     ui.label(format!("sudo '{}'", exe_path));
                     ui.add_space(10.0);
-                    ui.label("Rerun Irminsul with --no-admin if you wish to proceed without packet capture")
+                    ui.label("Rerun Aaru with --no-admin if you wish to proceed without packet capture")
                 });
 
                 // Push button to the bottom

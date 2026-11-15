@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use rand_mt::Mt64;
+use rayon::prelude::*;
 use tracing::{debug, info, instrument, trace, warn};
 
 use crate::bytes_as_hex;
@@ -89,36 +90,52 @@ fn is_command(bytes: &[u8]) -> bool {
         && bytes[bytes.len() - 1] == 0xAB
 }
 
-/// Tries the first `depth` numbers of the generator seeded with `seed`.
+/// Whether the number `client_seed` of a generator (with the seed of the server) gives the
+/// key `data` was encrypted with.
+fn fits(client_seed: u64, server_seed: u64, data: &[u8]) -> Option<Vec<u8>> {
+    let seed = client_seed ^ server_seed;
+    // Commands start with a known two byte magic.
+    let head = key_head(seed);
+    if data[0] ^ head[0] != 0x45 || data[1] ^ head[1] != 0x67 {
+        return None;
+    }
+    let key = new_key_from_seed(seed);
+    let mut clone = data.to_vec();
+    decrypt_command(&key, &mut clone);
+    if is_command(&clone) {
+        debug!("Found encryption key seed: {seed}");
+        Some(key)
+    } else {
+        None
+    }
+}
+
+/// From this many numbers on, the numbers are tried on all the cores (before that, the
+/// handing out of the work costs more than it saves).
+const PARALLEL_FROM: i32 = 256;
+
+/// Tries the first `depth` numbers of the generator seeded with `seed`.  The numbers
+/// themselves come one from the other, but trying them does not: they are tried together, and
+/// the first that fits (the nearest of the sequence) is the one taken.
 fn guess(seed: i64, server_seed: u64, depth: i32, data: &[u8]) -> Option<(usize, Vec<u8>)> {
     if data.len() < 4 {
         return None;
     }
 
-    // Attempt to generate the key.
     let mut generator = Random::seeded(seed as i32);
-    for index in 1..=depth {
-        let client_seed = generator.next_safe_uint64();
-
-        let seed = client_seed ^ server_seed;
-
-        // Commands start with a known two byte magic.
-        let head = key_head(seed);
-        if data[0] ^ head[0] != 0x45 || data[1] ^ head[1] != 0x67 {
-            continue;
+    if depth < PARALLEL_FROM {
+        for index in 1..=depth {
+            if let Some(key) = fits(generator.next_safe_uint64(), server_seed, data) {
+                return Some((index as usize, key));
+            }
         }
-
-        let key = new_key_from_seed(seed);
-        let mut clone = data.to_vec();
-        decrypt_command(&key, &mut clone);
-
-        if is_command(&clone) {
-            debug!("Found encryption key seed: {seed}");
-            return Some((index as usize, key));
-        }
+        return None;
     }
-
-    None
+    let numbers: Vec<u64> = (0..depth).map(|_| generator.next_safe_uint64()).collect();
+    numbers
+        .par_iter()
+        .enumerate()
+        .find_map_first(|(at, number)| fits(*number, server_seed, data).map(|key| (at + 1, key)))
 }
 
 /// Finds the key `data` was encrypted with by trying the generators seeded at
@@ -127,21 +144,21 @@ fn guess(seed: i64, server_seed: u64, depth: i32, data: &[u8]) -> Option<(usize,
 /// for the token.
 pub fn bruteforce(sent_time: u64, server_seed: u64, data: &[u8]) -> Option<FoundKey> {
     debug!("Running bruteforce loop.");
-    // Generate new seeds.
-    for i in 0..=(2 * SEARCH_WINDOW_MS) {
+    // The times are tried together, on all the cores; the first that fits in the order of
+    // nearest first is the one taken.
+    let found = (0..=(2 * SEARCH_WINDOW_MS)).into_par_iter().find_map_first(|i| {
         let offset = if i % 2 == 0 { i / 2 } else { -(i - 1) / 2 };
         let time = sent_time as i64 + offset; // This will act as the seed.
-
-        if let Some((output_index, key)) = guess(time, server_seed, FRESH_DEPTH, data) {
-            return Some(FoundKey {
-                time: time as u64,
-                output_index,
-                key,
-            });
-        }
+        guess(time, server_seed, FRESH_DEPTH, data).map(|(output_index, key)| FoundKey {
+            time: time as u64,
+            output_index,
+            key,
+        })
+    });
+    if found.is_none() {
+        warn!("Unable to find the encryption key seed.");
     }
-    warn!("Unable to find the encryption key seed.");
-    None
+    found
 }
 
 /// Finds the key when the client's generator is already known from an earlier
@@ -203,5 +220,23 @@ mod tests {
         assert!(bruteforce((seed_time + 900_000) as u64, 0xabcd_ef01_2345_6789, &command).is_none());
         let found = retained_search(seed_time as u64, 0xabcd_ef01_2345_6789, &command).unwrap();
         assert_eq!((found.time, found.output_index), (seed_time as u64, 777));
+    }
+}
+
+#[cfg(test)]
+mod speed {
+    use super::*;
+
+    /// How long the two searches take when nothing fits (the worst case); for looking at.
+    #[test]
+    #[ignore]
+    fn the_worst_case_is_timed() {
+        let data = vec![0u8; 64];
+        let started = std::time::Instant::now();
+        assert!(bruteforce(1_793_892_910_466, 0x1234_5678_9abc_def0, &data).is_none());
+        println!("fresh search, nothing fits: {:?}", started.elapsed());
+        let started = std::time::Instant::now();
+        assert!(retained_search(1_793_892_000_000, 0x1234_5678_9abc_def0, &data).is_none());
+        println!("retained search, nothing fits: {:?}", started.elapsed());
     }
 }

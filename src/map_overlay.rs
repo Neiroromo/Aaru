@@ -60,7 +60,7 @@ pub struct MapOverlaySettings {
     /// How far in from the edge the fading begins: 0 is none, 1 is from the
     /// middle.
     pub vignette: f32,
-    /// Drawn only while the game is the window in front: not over Irminsul or
+    /// Drawn only while the game is the window in front: not over Aaru or
     /// any other window.
     pub only_over_game: bool,
     /// The markers are drawn over the big map of the game itself, when it is open.
@@ -70,6 +70,9 @@ pub struct MapOverlaySettings {
     /// The enemies of the kinds chosen on the map that are near the player are listed at the
     /// right of the game, and within how many metres.
     pub nearby_mobs: bool,
+    /// The markers of the map (chests, oculi, plants ...) are in the list too, not only the
+    /// enemies.
+    pub nearby_marks: bool,
     pub nearby_metres: f32,
     /// Where the list is, from the top left of the window of the game; where it is at first
     /// (at the right, under what is told of the changes) if not moved.
@@ -90,6 +93,7 @@ impl Default for MapOverlaySettings {
             on_game_map: false,
             game_map_size: 1.,
             nearby_mobs: true,
+            nearby_marks: true,
             nearby_metres: 80.,
             nearby_pos: None,
         }
@@ -248,6 +252,8 @@ pub struct MapOverlay {
     near_made: Option<(Vec<crate::game_map_panel::NearRow>, [i32; 2], bool)>,
     /// The list was being moved the last time it was looked at.
     near_moving: bool,
+    /// When the camera was last written to the log (it is, now and then, to check it by).
+    camera_logged: Option<Instant>,
 }
 
 impl MapOverlay {
@@ -301,6 +307,7 @@ impl MapOverlay {
             near_window: None,
             near_made: None,
             near_moving: false,
+            camera_logged: None,
         }
     }
 
@@ -373,7 +380,7 @@ impl MapOverlay {
         let player = player.or(self.fake_player);
         self.handle_key(ctx);
         self.game_map_frame(ctx, snapshot, player, matched, shared, russian);
-        self.nearby_frame(ctx, player, shared, russian);
+        self.nearby_frame(ctx, player, shared, snapshot, matched, russian);
         // The traffic of the game can not be read: no map (it would be wrong), only that
         // said when the key is pressed.
         if shared.key_lost {
@@ -710,17 +717,50 @@ impl MapOverlay {
     /// The enemies of the kinds chosen on the map that are alive near the player, listed at the
     /// right of the game (where what changed is told, under it): the picture of the kind, the
     /// name, how far, and how much higher or lower.
-    fn nearby_frame(&mut self, ctx: &Context, player: Option<crate::PlayerPlace>, shared: &SharedMarkers, russian: bool) {
+    fn nearby_frame(
+        &mut self,
+        ctx: &Context,
+        player: Option<crate::PlayerPlace>,
+        shared: &SharedMarkers,
+        snapshot: &Snapshot,
+        matched: Option<&Matched>,
+        russian: bool,
+    ) {
         use crate::game_map_panel::NearRow;
+        /// What is near: a kind of marker or of enemy, how many of it, and the nearest.
+        struct Near {
+            /// Told apart by this (the kind of marker, or the family of the enemy).
+            key: (bool, u32),
+            label: u32,
+            name: Option<&'static str>,
+            across: f32,
+            /// How much higher it is, if known.
+            up: Option<f32>,
+            /// From the player to the nearest, in the game's x and z.
+            to: [f32; 2],
+            count: usize,
+        }
         let mut rows: Vec<NearRow> = Vec::new();
         let shown = self.settings.nearby_mobs
             && !shared.key_lost
             && !self.game_map.map_open()
             && (self.debug || hotkey::front() == hotkey::FRONT_GAME);
+        // The camera is read from the minimap only while the list is shown.
+        self.game_map.want_camera(shown);
+        let camera = self.game_map.camera_bearing();
         if let (true, Some(player)) = (shown, player) {
+            // Which way is "ahead": where the camera looks, if it was read from the minimap,
+            // else where the character faces.
+            let facing = camera.or(player.yaw);
+            if camera.is_some() && self.camera_logged.is_none_or(|at| at.elapsed() > Duration::from_secs(2)) {
+                self.camera_logged = Some(Instant::now());
+                tracing::debug!("camera {:.0} degrees, the character faces {:?}", camera.unwrap_or_default(), player.yaw);
+            }
             let data = markers::data();
-            // The nearest of each kind of monster, and how many of it are near.
-            let mut kinds: Vec<(u32, u32, f32, f32, usize, [f32; 2])> = Vec::new();
+            let radius = self.settings.nearby_metres;
+            let mut near: Vec<Near> = Vec::new();
+            // The enemies that are alive: one line for the variants of a monster (the ids differ
+            // in the last digits).
             for mob in &shared.mobs.alive {
                 let Some(label) = mob.label.filter(|label| shared.enabled.contains(label)) else {
                     continue;
@@ -728,42 +768,114 @@ impl MapOverlay {
                 if mob.scene != player.scene {
                     continue;
                 }
-                let across = (mob.position[0] - player.position[0]).hypot(mob.position[2] - player.position[2]);
+                let to = [mob.position[0] - player.position[0], mob.position[2] - player.position[2]];
+                let across = to[0].hypot(to[1]);
                 let up = mob.position[1] - player.position[1];
-                if across.hypot(up) > self.settings.nearby_metres {
+                if across.hypot(up) > radius {
                     continue;
                 }
-                // One line for the variants of a monster (the ids differ in the last digits).
                 let family = if mob.monster / 1_000_000 == 28 { mob.monster } else { mob.monster / 100 * 100 };
-                match kinds.iter_mut().find(|kind| kind.0 == family) {
+                match near.iter_mut().find(|kind| kind.key == (true, family)) {
                     Some(kind) => {
-                        kind.4 += 1;
-                        if across < kind.2 {
-                            (kind.2, kind.3, kind.5) = (across, up, [mob.position[0] - player.position[0], mob.position[2] - player.position[2]]);
+                        kind.count += 1;
+                        if across < kind.across {
+                            (kind.across, kind.up, kind.to) = (across, Some(up), to);
                         }
                     }
-                    None => kinds.push((family, label, across, up, 1, [mob.position[0] - player.position[0], mob.position[2] - player.position[2]])),
+                    None => near.push(Near { key: (true, family), label, name: crate::mob_watch::name_of(family, true).map(|_| ""), across, up: Some(up), to, count: 1 }),
                 }
             }
-            kinds.sort_by(|a, b| a.2.total_cmp(&b.2));
-            for (family, label, across, up, count, [dx, dz]) in kinds.into_iter().take(6) {
-                let kind = data.label(label);
+            // The markers of the map that are chosen: what is not collected (or opened), the
+            // nearest of each kind, the way to it and how much higher or lower, where the game
+            // has told the height.
+            if self.settings.nearby_marks && player.map != 0 {
+                let enemies_listed: std::collections::HashSet<u32> = near.iter().map(|kind| kind.label).collect();
+                let scale = player.scale.max(0.1);
+                let reach = radius * scale;
+                let floors = std::collections::HashSet::from([player.floor]);
+                let now = markers::unix_now();
+                let mut candidates: Vec<(u32, f32, [f32; 2], usize)> = Vec::new();
+                let mut bump = |label: u32, distance: f32, delta: [f32; 2]| {
+                    match candidates.iter_mut().find(|found| found.0 == label) {
+                        Some(found) => {
+                            found.3 += 1;
+                            if distance < found.1 {
+                                (found.1, found.2) = (distance, delta);
+                            }
+                        }
+                        None => candidates.push((label, distance, delta, 1)),
+                    }
+                };
+                for id in shared.enabled.iter() {
+                    // The chests of the world are listed below, from the chests that are followed;
+                    // the enemies that are alive are listed above.
+                    if (player.map == WORLD && markers::CHEST_LABELS.contains(id)) || enemies_listed.contains(id) {
+                        continue;
+                    }
+                    let Some(label) = data.label(*id) else {
+                        continue;
+                    };
+                    for point in data.points_on(*id, player.map, &floors) {
+                        let delta = [point.x - player.at[0], point.y - player.at[1]];
+                        if delta[0].abs() > reach || delta[1].abs() > reach {
+                            continue;
+                        }
+                        let distance = delta[0].hypot(delta[1]);
+                        if distance > reach {
+                            continue;
+                        }
+                        let done = shared.markable.contains(id)
+                            && matches!(shared.store.state(point.id, label.refresh, now), markers::State::Done { .. });
+                        if !done {
+                            bump(*id, distance, delta);
+                        }
+                    }
+                }
+                if player.map == WORLD
+                    && let Some(info) = data.atlas.map(WORLD).map(|def| def.info())
+                {
+                    for icon in self.icons(&info, snapshot, matched, shared) {
+                        if matches!(icon.look, IconLook::Opened | IconLook::Likely) {
+                            continue;
+                        }
+                        let Some(label) = markers::CHEST_LABELS.get((icon.tier as usize).wrapping_sub(1)) else {
+                            continue;
+                        };
+                        let delta = [icon.at[0] - info.origin[0] - player.at[0], icon.at[1] - info.origin[1] - player.at[1]];
+                        let distance = delta[0].hypot(delta[1]);
+                        if distance <= reach {
+                            bump(*label, distance, delta);
+                        }
+                    }
+                }
+                for (label, distance, delta, count) in candidates {
+                    // The map has x against the game's z, and y against its x.
+                    let to = [-delta[1] / scale, -delta[0] / scale];
+                    let up = crate::heights::estimate(player.scene, player.position[0] + to[0], player.position[2] + to[1])
+                        .map(|height| height - player.position[1]);
+                    near.push(Near { key: (false, label), label, name: None, across: distance / scale, up, to, count });
+                }
+            }
+            near.sort_by(|a, b| a.across.total_cmp(&b.across));
+            for kind in near.into_iter().take(6) {
+                let label = data.label(kind.label);
                 // The way to it from the way the player faces (0 is along z, 90 along x, as the
                 // game tells it), in steps, so that the list is not drawn anew all the time.
-                let turn = player.yaw.filter(|_| across >= 2.).map(|yaw| {
-                    let bearing = dx.atan2(dz).to_degrees();
+                let turn = facing.filter(|_| kind.across >= 2.).map(|yaw| {
+                    let bearing = kind.to[0].atan2(kind.to[1]).to_degrees();
                     let turn = (bearing - yaw).rem_euclid(360.);
-                    ((turn / 10.).round() as i32 * 10) % 360
+                    ((turn / 3.).round() as i32 * 3) % 360
                 });
+                let name = match (kind.key, kind.name) {
+                    ((true, family), Some(_)) => crate::mob_watch::name_of(family, russian).map(str::to_owned),
+                    _ => None,
+                };
                 rows.push(NearRow {
-                    icon: kind.and_then(|kind| self.mark_images.image(kind.id, &kind.icon)),
-                    name: crate::mob_watch::name_of(family, russian)
-                        .map(str::to_owned)
-                        .or_else(|| kind.map(|kind| kind.name(russian).to_owned()))
-                        .unwrap_or_default(),
-                    count,
-                    metres: across.round() as i32,
-                    up: up.round() as i32,
+                    icon: label.and_then(|label| self.mark_images.image(label.id, &label.icon)),
+                    name: name.or_else(|| label.map(|label| label.name(russian).to_owned())).unwrap_or_default(),
+                    count: kind.count,
+                    metres: kind.across.round() as i32,
+                    up: kind.up.map(|up| up.round() as i32),
                     turn,
                 });
             }
@@ -813,7 +925,7 @@ impl MapOverlay {
             self.near_made = Some(made);
         }
         window.set_movable(moving);
-        ctx.request_repaint_after(Duration::from_millis(if moving { 40 } else { 250 }));
+        ctx.request_repaint_after(Duration::from_millis(if moving { 40 } else if camera.is_some() { 25 } else { 250 }));
     }
 
     /// What the thread that looks at the game is doing, in words.
@@ -1239,8 +1351,8 @@ impl MapOverlay {
                 RichText::new(tr("Only over the game", "Только поверх игры")).size(14.),
             )
             .on_hover_text(tr(
-                "Not drawn while Irminsul (or any other window) is in front.",
-                "Не рисуется, пока на переднем плане Irminsul (или любое другое окно).",
+                "Not drawn while Aaru (or any other window) is in front.",
+                "Не рисуется, пока на переднем плане Aaru (или любое другое окно).",
             ))
             .changed();
         ui.label(
@@ -1286,9 +1398,19 @@ impl MapOverlay {
             .color(crate::achievement_tab::DIM),
         );
         changed |= ui
-            .checkbox(&mut self.settings.nearby_mobs, RichText::new(tr("List the enemies near", "Показывать мобов рядом")).size(14.))
+            .checkbox(&mut self.settings.nearby_mobs, RichText::new(tr("List what is near you", "Показывать, что рядом с вами")).size(14.))
             .changed();
         if self.settings.nearby_mobs {
+            changed |= ui
+                .checkbox(
+                    &mut self.settings.nearby_marks,
+                    RichText::new(tr("Markers too (chests, oculi, plants ...)", "И метки карты (сундуки, окули, растения ...)")).size(14.),
+                )
+                .on_hover_text(tr(
+                    "The nearest not collected marker of every chosen kind: which way to go, how far, and how much higher or lower where the game has told the height there.",
+                    "Ближайшая несобранная метка каждого выбранного вида: куда идти, как далеко и насколько выше или ниже там, где игра сообщала высоту.",
+                ))
+                .changed();
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(tr(

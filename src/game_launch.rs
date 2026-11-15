@@ -1,4 +1,4 @@
-//! Starts Genshin Impact the way that lets Irminsul see its traffic: HoYoPlay
+//! Starts Genshin Impact the way that lets Aaru see its traffic: HoYoPlay
 //! first, and when it is up, the game.  Whatever of the two is running is closed
 //! before, so that both start fresh.
 //!

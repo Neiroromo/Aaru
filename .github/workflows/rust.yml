@@ -65,10 +65,10 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
-          path: target/release/irminsul${{ matrix.suffix }}
+          path: target/release/aaru${{ matrix.suffix }}
       - if: ${{matrix.alternate_artifact}}
         name: Upload release artifact
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.alternate_artifact }}
-          path: target/release/irminsul${{ matrix.suffix }}
+          path: target/release/aaru${{ matrix.suffix }}

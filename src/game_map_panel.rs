@@ -184,7 +184,9 @@ pub struct NearRow {
     pub name: String,
     pub count: usize,
     pub metres: i32,
-    pub up: i32,
+    /// How much higher (or, negative, lower) it is than the player, if that is known (it is
+    /// not for a marker with nothing of the game's own near it).
+    pub up: Option<i32>,
     /// Which way to go to it, from the way the player faces: degrees to the right (0 is
     /// straight on, 90 to the right, 180 behind), if the way the player faces is known.
     pub turn: Option<i32>,
@@ -200,7 +202,7 @@ pub fn nearby(rows: &[NearRow], russian: bool, moving: bool) -> (Vec<u8>, usize,
     picture.rect([0, 0, width as i32, height as i32], NAVY, if moving { 0.95 } else { 0.88 });
     picture.frame([0, 0, width as i32, height as i32], if moving { AMBER } else { [0x4a, 0x58, 0x7a] });
     if rows.is_empty() {
-        let text = if russian { "Мобы рядом: перетащите мышью" } else { "Enemies near: drag with the mouse" };
+        let text = if russian { "Список рядом: перетащите мышью" } else { "The list near you: drag with the mouse" };
         picture.text_centred([0, 6, width as i32, ROW], text, 16., WHITE);
     }
     let unit = if russian { "м" } else { "m" };
@@ -215,12 +217,12 @@ pub fn nearby(rows: &[NearRow], russian: bool, moving: bool) -> (Vec<u8>, usize,
         let far = format!("{} {unit}", row.metres);
         let far_width = Picture::text_width(&far, 18.);
         picture.text(width as f32 - 12. - far_width, top as f32 + 2., &far, 18., WHITE);
-        if row.up.abs() >= 3 {
-            let tall = format!("{}", row.up.abs());
+        if let Some(up) = row.up.filter(|up| up.abs() >= 3) {
+            let tall = format!("{}", up.abs());
             let tall_width = Picture::text_width(&tall, 13.);
             let x = width as f32 - 12. - tall_width;
             picture.text(x, top as f32 + 21., &tall, 13., AMBER);
-            picture.arrow(x as i32 - 12, top + 24, row.up > 0, AMBER);
+            picture.arrow(x as i32 - 12, top + 24, up > 0, AMBER);
         }
         // Which way to go, before the numbers.
         let numbers = far_width.max(46.);
@@ -300,11 +302,11 @@ pub fn panel(state: &PanelState) -> Vec<u8> {
     let mobs = buttons[BUTTON_MOBS];
     if state.mobs {
         picture.rect(mobs, AMBER, 1.);
-        picture.text_centred(mobs, tr("Enemies near: shown", "Мобы рядом: показываются"), 16., [0, 0, 0]);
+        picture.text_centred(mobs, tr("Near you: shown", "Список рядом: показан"), 16., [0, 0, 0]);
     } else {
         picture.rect(mobs, [0x2a, 0x34, 0x4c], 1.);
         picture.frame(mobs, DIM);
-        picture.text_centred(mobs, tr("Enemies near: hidden", "Мобы рядом: скрыты"), 16., WHITE);
+        picture.text_centred(mobs, tr("Near you: hidden", "Список рядом: скрыт"), 16., WHITE);
     }
     picture.text(16., 196., &state.status, 14., DIM);
     picture.px
@@ -353,10 +355,10 @@ mod tests {
         let (picture, width, height) = looking(1, true);
         save("looking.png", &picture, width, height);
         let rows = [
-            NearRow { icon: None, name: "Химера-бронезверь".to_owned(), count: 3, metres: 42, up: 12, turn: Some(0) },
-            NearRow { icon: None, name: "Волкодлак-стрелок с очень длинным именем".to_owned(), count: 1, metres: 118, up: -37, turn: Some(135) },
-            NearRow { icon: None, name: "Хиличурл".to_owned(), count: 1, metres: 7, up: 0, turn: Some(-90) },
-            NearRow { icon: None, name: "Слайм".to_owned(), count: 1, metres: 64, up: 0, turn: None },
+            NearRow { icon: None, name: "Химера-бронезверь".to_owned(), count: 3, metres: 42, up: Some(12), turn: Some(0) },
+            NearRow { icon: None, name: "Волкодлак-стрелок с очень длинным именем".to_owned(), count: 1, metres: 118, up: Some(-37), turn: Some(135) },
+            NearRow { icon: None, name: "Хиличурл".to_owned(), count: 1, metres: 7, up: Some(0), turn: Some(-90) },
+            NearRow { icon: None, name: "Слайм".to_owned(), count: 1, metres: 64, up: None, turn: None },
         ];
         let (picture, width, height) = nearby(&rows, true, false);
         save("nearby.png", &picture, width, height);

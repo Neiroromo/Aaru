@@ -30,6 +30,7 @@ mod chest_watch;
 mod object_watch;
 mod quest_watch;
 mod puzzle_watch;
+mod camera_dir;
 mod chests;
 mod chests_tab;
 mod coverage;
@@ -38,6 +39,7 @@ mod events_tab;
 mod debug_timeline;
 mod good;
 mod game_launch;
+mod heights;
 mod hotkey;
 mod levels;
 mod scenes;
@@ -61,19 +63,22 @@ mod overlay;
 mod overlay_window;
 mod planner_tab;
 mod probe;
+mod housekeeping;
+mod migrate;
 mod mob_watch;
 mod monitor;
 mod player_data;
 mod profiles;
 mod roster_tab;
 mod tray;
+mod window_capture;
 mod window_visibility;
 mod update;
 mod upgrade_data;
 mod upgrade_store;
 mod wish;
 
-const APP_ID: &str = "Irminsul";
+const APP_ID: &str = "Aaru";
 
 #[derive(Clone, Copy, Debug)]
 pub enum ConfirmationType {
@@ -279,7 +284,7 @@ impl TracingLevel {
                 if cfg!(debug_assertions) {
                     "info"
                 } else {
-                    "warn,irminsul=info"
+                    "warn,aaru=info"
                 }
             }
             TracingLevel::VerboseInfo => "info",
@@ -333,8 +338,18 @@ fn install_panic_hook() {
 }
 
 fn main() -> eframe::Result {
+    // Before anything is written to the data folder: what the program was called before
+    // (Irminsul) kept its data in a folder of that name, which is copied to the new one.
+    let migration = migrate::run();
     let (_guard, reload_handle) = tracing_init().unwrap();
     install_panic_hook();
+    match &migration {
+        migrate::Outcome::Copied { files, bytes } => {
+            tracing::info!("the data of Irminsul was copied to the data folder of Aaru: {files} files, {} MB", bytes / 1_000_000)
+        }
+        migrate::Outcome::Failed(why) => tracing::error!("the data of Irminsul could not be copied: {why}"),
+        migrate::Outcome::Nothing => (),
+    }
 
     let args = Args::parse();
 
@@ -345,7 +360,11 @@ fn main() -> eframe::Result {
 
     // After the rights are there: the program that asks for them ends at once.
     session_log::start();
-    tracing::info!("Irminsul {} started", env!("CARGO_PKG_VERSION"));
+    // The task that started Irminsul when logging on is taken over by one of this name.
+    std::thread::spawn(autostart::migrate_old_task);
+    housekeeping::start();
+    housekeeping::preload();
+    tracing::info!("Aaru {} started", env!("CARGO_PKG_VERSION"));
 
     let capture_backend = args.capture_backend;
     let minimized = args.minimized;
@@ -380,10 +399,10 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     let result = eframe::run_native(
-        "Irminsul",
+        "Aaru",
         native_options,
         Box::new(move |cc| {
-            Ok(Box::new(app::IrminsulApp::new(
+            Ok(Box::new(app::AaruApp::new(
                 cc,
                 reload_handle,
                 capture_backend,

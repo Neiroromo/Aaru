@@ -555,7 +555,7 @@ pub fn refresh_in_background(ctx: &egui::Context, force: bool) {
 
 async fn fetch_and_keep() -> Result<()> {
     let client = reqwest::Client::builder()
-        .user_agent("Irminsul")
+        .user_agent("Aaru")
         .timeout(Duration::from_secs(180))
         .build()?;
     let fetched = crate::atlas_fetch::fetch_all(&client).await?;

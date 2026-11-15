@@ -15,10 +15,10 @@
 //!
 //! Nothing here reads the game: only what is on the screen.
 
-use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::rc::Rc;
+use rayon::prelude::*;
 
 use crate::map_tiles::{MapInfo, TILE, TileKey};
 
@@ -69,7 +69,7 @@ pub const SURE: f32 = 0.5;
 const RECT: [f32; 4] = [0.07, 0.15, 0.92, 0.87];
 
 /// What the map looks like at a place.
-pub trait Ground {
+pub trait Ground: Sync {
     /// How light the full size map is at a place, 0 to 255, looked at with pixels this many
     /// units big; not a number where it is not known.
     fn at(&self, x: f32, y: f32, units: f32) -> f32;
@@ -199,8 +199,10 @@ fn slide(shot: &Gray, ground: &dyn Ground, view: View, margin: i32) -> Option<Fo
     let units = 1. / scale;
     let m = margin as usize;
     let map = ground.patch(view.center, units, shot.w + 2 * m, shot.h + 2 * m);
-    let mut best: Option<(f32, i32, i32)> = None;
-    for dy in -margin..=margin {
+    // Each row of places is searched on its own, and the best of the rows is taken (the first
+    // of them where two are as good, as when it was one after the other).
+    let search_row = |dy: i32| -> Option<(f32, i32, i32)> {
+        let mut best: Option<(f32, i32, i32)> = None;
         for dx in -margin..=margin {
             if let Some(score) = alike(shot, &map, margin, dx, dy)
                 && best.is_none_or(|(most, _, _)| score > most)
@@ -208,7 +210,17 @@ fn slide(shot: &Gray, ground: &dyn Ground, view: View, margin: i32) -> Option<Fo
                 best = Some((score, dx, dy));
             }
         }
-    }
+        best
+    };
+    let rows = (2 * margin + 1) as usize;
+    let best = if rows * shot.w * shot.h > 40_000 {
+        (-margin..=margin)
+            .into_par_iter()
+            .filter_map(search_row)
+            .reduce_with(|a, b| if b.0 > a.0 { b } else { a })
+    } else {
+        (-margin..=margin).filter_map(search_row).reduce(|a, b| if b.0 > a.0 { b } else { a })
+    };
     best.map(|(score, dx, dy)| Found {
         view: View { center: [view.center[0] + dx as f32 * units, view.center[1] + dy as f32 * units], zoom: view.zoom },
         score,
@@ -232,8 +244,24 @@ pub struct Shot {
 impl Shot {
     pub fn new(pixels: &[u8], width: usize, height: usize, step: usize, rgb: [usize; 3]) -> Self {
         let sized = |th: usize| reduce(pixels, width, height, step, rgb, (th * width / height.max(1)).max(8), th);
-        Self { small: sized(90), middle: sized(240), big: sized(540) }
+        // The three sizes are made together.
+        let ((small, middle), big) = rayon::join(|| rayon::join(|| sized(90), || sized(240)), || sized(540));
+        Self { small, middle, big }
     }
+
+    /// Only the smallest picture: for seeing whether the screen is as it was.
+    pub fn small_of(pixels: &[u8], width: usize, height: usize, step: usize, rgb: [usize; 3]) -> Gray {
+        reduce(pixels, width, height, step, rgb, (90 * width / height.max(1)).max(8), 90)
+    }
+}
+
+/// How much two small pictures of the screen differ (the mean of the differences, 0 to 255).
+pub fn difference(a: &Gray, b: &Gray) -> f32 {
+    if a.px.len() != b.px.len() || a.px.is_empty() {
+        return f32::MAX;
+    }
+    let sum: f32 = a.px.iter().zip(&b.px).map(|(x, y)| if x.is_nan() || y.is_nan() { 0. } else { (x - y).abs() }).sum();
+    sum / a.px.len() as f32
 }
 
 /// Makes a view that was found with the small picture exact: the middle, then the big one,
@@ -277,13 +305,24 @@ pub fn acquire_wide(shot: &Shot, ground: &dyn Ground, around: [f32; 2]) -> Optio
     anywhere(shot, ground, around, 60)
 }
 
-fn anywhere(shot: &Shot, ground: &dyn Ground, around: [f32; 2], margin: i32) -> Option<Found> {
-    let mut best: Option<Found> = None;
-    let mut zoom = ZOOM_LEAST;
-    while zoom <= ZOOM_MOST {
-        best = better(best, slide(&shot.small, ground, View { center: around, zoom }, margin));
+/// The zooms from one to another, each a bit more than the one before.
+fn zooms(from: f32, to: f32) -> Vec<f32> {
+    let mut out = Vec::new();
+    let mut zoom = from;
+    while zoom <= to {
+        out.push(zoom);
         zoom *= 1.035;
     }
+    out
+}
+
+/// The best of what each of the zooms gives (tried together).
+fn best_of_zooms(zooms: Vec<f32>, one: impl Fn(f32) -> Option<Found> + Sync + Send) -> Option<Found> {
+    zooms.into_par_iter().map(one).reduce(|| None, better)
+}
+
+fn anywhere(shot: &Shot, ground: &dyn Ground, around: [f32; 2], margin: i32) -> Option<Found> {
+    let best = best_of_zooms(zooms(ZOOM_LEAST, ZOOM_MOST), |zoom| slide(&shot.small, ground, View { center: around, zoom }, margin));
     let best = best?;
     let exact = refine(shot, ground, best);
     // With nothing known before, it has to be surer.
@@ -320,12 +359,9 @@ pub fn track(shot: &Shot, ground: &dyn Ground, last: View) -> Option<Found> {
 /// Finds the view again after it was lost: about the zoom it had, anywhere within a screen
 /// of where it was.
 pub fn recover(shot: &Shot, ground: &dyn Ground, last: View) -> Option<Found> {
-    let mut best: Option<Found> = None;
-    let mut zoom = (last.zoom * 0.6).max(ZOOM_LEAST);
-    while zoom <= (last.zoom * 1.7).min(ZOOM_MOST) {
-        best = better(best, slide(&shot.small, ground, View { center: last.center, zoom }, 45));
-        zoom *= 1.035;
-    }
+    let best = best_of_zooms(zooms((last.zoom * 0.6).max(ZOOM_LEAST), (last.zoom * 1.7).min(ZOOM_MOST)), |zoom| {
+        slide(&shot.small, ground, View { center: last.center, zoom }, 45)
+    });
     let exact = refine(shot, ground, best?);
     (exact.score >= SURE).then_some(exact)
 }
@@ -333,14 +369,11 @@ pub fn recover(shot: &Shot, ground: &dyn Ground, last: View) -> Option<Found> {
 /// Looks for the view anywhere within `reach` units of a place, at any zoom: slow, for when
 /// nothing else is known.
 pub fn search(shot: &Shot, ground: &dyn Ground, around: [f32; 2], reach: f32) -> Option<Found> {
-    let mut best: Option<Found> = None;
-    let mut zoom = ZOOM_LEAST;
-    while zoom <= ZOOM_MOST {
+    let best = best_of_zooms(zooms(ZOOM_LEAST, ZOOM_MOST), |zoom| {
         let units = 1. / (zoom * shot.small.h as f32);
         let margin = ((reach / units) as i32).clamp(4, 160);
-        best = better(best, slide(&shot.small, ground, View { center: around, zoom }, margin));
-        zoom *= 1.035;
-    }
+        slide(&shot.small, ground, View { center: around, zoom }, margin)
+    });
     let best = best?;
     let exact = refine(shot, ground, best);
     if std::env::var_os("IRMINSUL_SYNC_RAW").is_some() {
@@ -354,17 +387,17 @@ pub struct DiskGround {
     dir: PathBuf,
     max_level: u32,
     size: [f32; 2],
-    tiles: RefCell<HashMap<TileKey, Option<Rc<Vec<u8>>>>>,
+    tiles: Mutex<HashMap<TileKey, Option<Arc<Vec<u8>>>>>,
 }
 
 impl DiskGround {
     pub fn new(dir: PathBuf, info: &MapInfo) -> Self {
-        Self { dir, max_level: info.max_level, size: info.size, tiles: RefCell::default() }
+        Self { dir, max_level: info.max_level, size: info.size, tiles: Mutex::default() }
     }
 
     /// Lets go of what was read, when it is a lot.
     pub fn trim(&self) {
-        let mut tiles = self.tiles.borrow_mut();
+        let mut tiles = self.tiles.lock().unwrap_or_else(|e| e.into_inner());
         if tiles.len() > 1500 {
             tiles.clear();
         }
@@ -372,25 +405,27 @@ impl DiskGround {
 
     /// Forgets the tiles that were not there: they may have come since.
     pub fn retry_missing(&self) {
-        self.tiles.borrow_mut().retain(|_, tile| tile.is_some());
+        self.tiles.lock().unwrap_or_else(|e| e.into_inner()).retain(|_, tile| tile.is_some());
     }
 
-    fn tile(&self, key: TileKey) -> Option<Rc<Vec<u8>>> {
-        let mut tiles = self.tiles.borrow_mut();
-        tiles
-            .entry(key)
-            .or_insert_with(|| {
-                let suffix = if key.level == 0 { "P0".to_owned() } else { format!("N{}", key.level) };
-                let path = self.dir.join(format!("{}_{}_{suffix}.webp", key.x, key.y));
-                let image = image::open(path).ok()?.to_luma8();
-                (image.width() == TILE as u32 && image.height() == TILE as u32).then(|| Rc::new(image.into_raw()))
-            })
-            .clone()
+    fn tile(&self, key: TileKey) -> Option<Arc<Vec<u8>>> {
+        if let Some(known) = self.tiles.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            return known.clone();
+        }
+        // Read without the lock held, so that the others are not made to wait for the disk.
+        let suffix = if key.level == 0 { "P0".to_owned() } else { format!("N{}", key.level) };
+        let path = self.dir.join(format!("{}_{}_{suffix}.webp", key.x, key.y));
+        let read = image::open(path)
+            .ok()
+            .map(|image| image.to_luma8())
+            .filter(|image| image.width() == TILE as u32 && image.height() == TILE as u32)
+            .map(|image| Arc::new(image.into_raw()));
+        self.tiles.lock().unwrap_or_else(|e| e.into_inner()).entry(key).or_insert(read).clone()
     }
 
     /// The tile that has a place, of the level wanted or, if that is not there, of a
     /// coarser one: the tile, how many units it is across, and where it begins.
-    fn resolve(&self, x: f32, y: f32, wanted: u32) -> Option<(Rc<Vec<u8>>, f32, [f32; 2])> {
+    fn resolve(&self, x: f32, y: f32, wanted: u32) -> Option<(Arc<Vec<u8>>, f32, [f32; 2])> {
         for level in wanted..=self.max_level {
             let span = TILE * 2f32.powi(level as i32);
             let key = TileKey { level, x: (x / span) as u32, y: (y / span) as u32 };
@@ -427,33 +462,35 @@ impl Ground for DiskGround {
     fn patch(&self, center: [f32; 2], units: f32, w: usize, h: usize) -> Gray {
         let wanted = self.level(units);
         let fine = TILE * 2f32.powi(wanted as i32);
-        let mut px = Vec::with_capacity(w * h);
         let (left, top) = (center[0] - w as f32 / 2. * units, center[1] - h as f32 / 2. * units);
-        // The tile of the last place: which one of the level wanted it stands for, and it.
-        let mut last: Option<((i32, i32), Option<(Rc<Vec<u8>>, f32, [f32; 2])>)> = None;
-        for row in 0..h {
+        let mut px = vec![f32::NAN; w * h];
+        // The rows are made together (and each remembers the tile of its last place: which
+        // one of the level wanted it stands for, and it).
+        let make_row = |row: usize, out: &mut [f32]| {
             let y = top + (row as f32 + 0.5) * units;
-            for column in 0..w {
+            let mut last: Option<((i32, i32), Option<(Arc<Vec<u8>>, f32, [f32; 2])>)> = None;
+            for (column, slot) in out.iter_mut().enumerate() {
                 let x = left + (column as f32 + 0.5) * units;
                 if x < 0. || y < 0. || x >= self.size[0] || y >= self.size[1] {
-                    px.push(f32::NAN);
                     continue;
                 }
                 let cell = ((x / fine) as i32, (y / fine) as i32);
                 if last.as_ref().is_none_or(|(was, _)| *was != cell) {
                     last = Some((cell, self.resolve(x, y, wanted)));
                 }
-                px.push(match last.as_ref().and_then(|(_, tile)| tile.as_ref()) {
-                    Some((tile, span, from)) => {
-                        let (u, v) = (
-                            (((x - from[0]) / span * TILE) as usize).min(TILE as usize - 1),
-                            (((y - from[1]) / span * TILE) as usize).min(TILE as usize - 1),
-                        );
-                        tile[v * TILE as usize + u] as f32
-                    }
-                    None => f32::NAN,
-                });
+                if let Some((_, Some((tile, span, from)))) = last.as_ref() {
+                    let (u, v) = (
+                        (((x - from[0]) / span * TILE) as usize).min(TILE as usize - 1),
+                        (((y - from[1]) / span * TILE) as usize).min(TILE as usize - 1),
+                    );
+                    *slot = tile[v * TILE as usize + u] as f32;
+                }
             }
+        };
+        if w * h > 20_000 {
+            px.par_chunks_mut(w).enumerate().for_each(|(row, out)| make_row(row, out));
+        } else {
+            px.chunks_mut(w).enumerate().for_each(|(row, out)| make_row(row, out));
         }
         Gray { w, h, px }
     }

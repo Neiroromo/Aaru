@@ -2,7 +2,7 @@
 //! after the data built into this program was made.
 //!
 //! The built-in data (`upgrade_data`) is a snapshot of the game's files and
-//! only changes with a new version of Irminsul.  So that new content shows up
+//! only changes with a new version of Aaru.  So that new content shows up
 //! without one, this asks the lunaris.moe database, which keeps the data of
 //! the versions to come, what is new in it.  It is checked when the program
 //! starts and every few hours after, costs two small requests when nothing is
@@ -343,7 +343,7 @@ pub fn start(ctx: &egui::Context) {
         };
         runtime.block_on(async move {
             let client = match reqwest::Client::builder()
-                .user_agent("Irminsul")
+                .user_agent("Aaru")
                 .timeout(Duration::from_secs(90))
                 .build()
             {
@@ -862,7 +862,7 @@ async fn character(
 
     let mut ascension = BTreeMap::new();
     for (key, value) in en["ascension"].as_object().into_iter().flatten() {
-        // What the levels cost is not counted, like elsewhere in Irminsul.
+        // What the levels cost is not counted, like elsewhere in Aaru.
         if key != "exp" {
             add_costs(&mut ascension, key, value);
         }
