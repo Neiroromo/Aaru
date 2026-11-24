@@ -58,6 +58,25 @@ impl Default for AchievementProgress {
 }
 
 impl AchievementProgress {
+    /// The marks of every account, the shown one with the others.
+    pub fn all_marks(&self) -> BTreeMap<u32, BTreeSet<u32>> {
+        let mut all = self.by_profile.clone();
+        if self.profile != 0 {
+            all.insert(self.profile, self.done.clone());
+        }
+        all
+    }
+
+    /// Adds marks to the account `uid` (the ones there stay).  `uid` 0 is the marks of the
+    /// shown account while none is known.
+    pub fn add_marks(&mut self, uid: u32, ids: &BTreeSet<u32>) {
+        if uid == self.profile {
+            self.done.extend(ids);
+        } else {
+            self.by_profile.entry(uid).or_default().extend(ids);
+        }
+    }
+
     /// Shows the marks of another account, keeping the ones of this.
     pub fn switch_profile(&mut self, uid: u32) {
         if uid == self.profile {

@@ -22,6 +22,8 @@ mod app;
 mod atlas;
 mod atlas_fetch;
 mod autostart;
+mod backup;
+mod backup_ui;
 mod capture;
 mod capture_popup;
 mod changes;
@@ -363,6 +365,12 @@ fn main() -> eframe::Result {
 
     // After the rights are there: the program that asks for them ends at once.
     session_log::start();
+    // A backup that was chosen to be imported is put in place before anything reads the data.
+    match backup::Roots::current().and_then(|roots| backup::apply_pending(&roots)) {
+        Ok(Some(done)) => tracing::info!("a backup was imported: {} files, the old ones are in {:?}", done.files, done.backup),
+        Ok(None) => (),
+        Err(why) => tracing::error!("a backup could not be imported: {why:#}"),
+    }
     // The task that started Irminsul when logging on is taken over by one of this name.
     crate::spawn_named("startup-task", autostart::migrate_old_task);
     housekeeping::start();

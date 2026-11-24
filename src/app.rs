@@ -155,6 +155,7 @@ pub struct AaruApp {
     background_log_note: String,
 
     capture_settings_open: bool,
+    backup_ui: crate::backup_ui::BackupUi,
 
     optimizer_settings_open: bool,
     optimizer_export_rx: Option<oneshot::Receiver<Result<String>>>,
@@ -344,6 +345,7 @@ impl AaruApp {
             power_tools_open: false,
             background_log_note: String::new(),
             capture_settings_open: false,
+            backup_ui: Default::default(),
             optimizer_settings_open: false,
             optimizer_export_rx: None,
             optimizer_save_dialog: None,
@@ -995,7 +997,20 @@ impl AaruApp {
         }
         // The settings wait while the dialog to pick a program is open, which
         // they would be in the way of.
-        if self.capture_settings_open && self.launcher_dialog.is_none() {
+        if self.backup_ui.open {
+            let russian = self.saved_state.achievement_progress.language == crate::achievement_data::Language::Ru;
+            let current = self.portable_settings();
+            if let crate::backup_ui::Action::Imported { settings } = self.backup_ui.show(ui.ctx(), russian, &current) {
+                if let Some((settings, accounts)) = settings {
+                    self.apply_portable_settings(settings, &accounts);
+                }
+                self.backup_ui.open = false;
+                if !self.restarting {
+                    self.restart(ui);
+                }
+            }
+        }
+        if self.capture_settings_open && self.launcher_dialog.is_none() && !self.backup_ui.open {
             let modal = Modal::new(Id::new("Settings")).show(ui.ctx(), |ui| {
                 self.capture_settings_modal(ui);
             });
@@ -1712,6 +1727,19 @@ impl AaruApp {
             }
         });
         ui.separator();
+        let russian = self.saved_state.achievement_progress.language == crate::achievement_data::Language::Ru;
+        if ui
+            .button(if russian { "Экспорт / импорт данных..." } else { "Export / import your data..." })
+            .on_hover_text(if russian {
+                "Отметки на карте, сундуки, цели планировщика и выученное при игре: чтобы перенести на другой компьютер"
+            } else {
+                "Map marks, chests, planner goals and what was learned by playing: to move to another computer"
+            })
+            .clicked()
+        {
+            self.backup_ui.open();
+        }
+        ui.separator();
         egui::Sides::new().show(
             ui,
             |_ui| {},
@@ -1721,6 +1749,57 @@ impl AaruApp {
                 }
             },
         );
+    }
+
+    /// The settings that go with a backup (not where windows are, not the launcher's path).
+    fn portable_settings(&self) -> crate::backup::PortableSettings {
+        let state = &self.saved_state;
+        crate::backup::PortableSettings {
+            export_settings: Some(state.export_settings.clone()),
+            auto_start_capture: Some(state.auto_start_capture),
+            close_to_tray: Some(state.close_to_tray),
+            show_capture_popup: Some(state.show_capture_popup),
+            show_changes_popup: Some(state.show_changes_popup),
+            minimize_on_launch: Some(state.minimize_on_launch),
+            hide_launcher: Some(state.hide_launcher),
+            language: Some(state.achievement_progress.language),
+            overlay: None,
+            achievements: state.achievement_progress.all_marks(),
+        }
+    }
+
+    /// Puts the settings of a backup in (the marks of the tracker are added to the ones there).
+    fn apply_portable_settings(&mut self, settings: crate::backup::PortableSettings, accounts: &std::collections::BTreeMap<u32, u32>) {
+        let state = &mut self.saved_state;
+        if let Some(value) = settings.export_settings {
+            state.export_settings = value;
+        }
+        if let Some(value) = settings.auto_start_capture {
+            state.auto_start_capture = value;
+        }
+        if let Some(value) = settings.close_to_tray {
+            state.close_to_tray = value;
+        }
+        if let Some(value) = settings.show_capture_popup {
+            state.show_capture_popup = value;
+        }
+        if let Some(value) = settings.show_changes_popup {
+            state.show_changes_popup = value;
+        }
+        if let Some(value) = settings.minimize_on_launch {
+            state.minimize_on_launch = value;
+        }
+        if let Some(value) = settings.hide_launcher {
+            state.hide_launcher = value;
+        }
+        if let Some(value) = settings.language {
+            state.achievement_progress.language = value;
+        }
+        for (from, ids) in &settings.achievements {
+            if let Some(to) = accounts.get(from) {
+                state.achievement_progress.add_marks(*to, ids);
+            }
+        }
     }
 
     fn optimizer_settings_modal(&mut self, ui: &mut egui::Ui) {
