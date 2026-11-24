@@ -1,6 +1,6 @@
 [package]
 name = "aaru"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Konkers <konkers@konkers.net>"]
 edition = "2024"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml", "src/data/*.json"]
