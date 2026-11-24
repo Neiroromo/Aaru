@@ -191,7 +191,8 @@ fn read_at(picture: &Picture, center: [f32; 2], radius: f32) -> Option<Reading> 
     for degrees in 0..360 {
         let turn = (degrees as f32).to_radians();
         let (mut across, mut level, mut counted) = (0f32, 0f32, 0u32);
-        for r in first..last {
+        // Every second place along the ray is enough (the wedge is wide), and half the work.
+        for r in (first..last).step_by(2) {
             let r = r as f32;
             let (after, before, middle) = (
                 picture.darkest(center[0] + r * (turn + delta).cos(), center[1] + r * (turn + delta).sin()),
@@ -205,7 +206,7 @@ fn read_at(picture: &Picture, center: [f32; 2], radius: f32) -> Option<Reading> 
             }
         }
         // Rays that are mostly out of the picture say nothing.
-        if counted as i32 >= (last - first) / 2 {
+        if counted as i32 >= (last - first) / 4 {
             step[degrees] = across / counted as f32;
             along[degrees] = level / counted as f32;
         } else {

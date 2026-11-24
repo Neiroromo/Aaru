@@ -177,6 +177,7 @@ pub struct AaruApp {
     restarting: bool,
     /// Set when quitting for real, as opposed to hiding in the tray.
     quitting: bool,
+    frame_stats: crate::frame_stats::FrameStats,
     tray: Option<Tray>,
     /// Frames left to hide the window in, when it was asked to start hidden.
     hide_after_start: u8,
@@ -237,7 +238,7 @@ fn start_async_runtime(
     let (wish_url_tx, wish_url_rx) = watch::channel(None);
     let mut updater_state_rx = state_rx.clone();
     let updater_ctx = egui_ctx.clone();
-    thread::spawn(move || {
+    crate::spawn_named("app-runtime", move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
 
         rt.block_on(async {
@@ -370,6 +371,7 @@ impl AaruApp {
             map_tab: crate::map_tab::MapTab::new(&cc.egui_ctx),
             restarting: false,
             quitting: false,
+            frame_stats: Default::default(),
             tray: Tray::new(&cc.egui_ctx),
             hide_after_start: if minimized { 3 } else { 0 },
             autostart_enabled: autostart::is_enabled(),
@@ -399,7 +401,18 @@ impl eframe::App for AaruApp {
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // How often this is called, and what asks for it: told of in the log when it is a great
+        // deal; and a window that is not in use is kept from being drawn without end.
+        let focused = ctx.input(|input| input.focused);
+        self.frame_stats.begin(ctx, focused);
+        self.update_window(ctx, frame);
+        self.frame_stats.end();
+    }
+}
+
+impl AaruApp {
+    fn update_window(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.style_mut(|style| {
             style.interaction.selectable_labels = false;
             style.interaction.tooltip_delay = 0.25;
@@ -1427,6 +1440,18 @@ impl AaruApp {
         }
         ui.end_row();
         ui.separator();
+        ui.label(RichText::new("Drawing of the window").size(16.));
+        ui.label(
+            RichText::new(format!(
+                "{:.1} draws a second, {:.0}% of the time drawing{}.{}",
+                self.frame_stats.per_second,
+                self.frame_stats.busy_share * 100.,
+                if self.frame_stats.throttled { " (held back: the window is not in use)" } else { "" },
+                if self.frame_stats.top_cause.is_empty() { String::new() } else { format!(" Asked for the most by: {}", self.frame_stats.top_cause) },
+            ))
+            .size(12.),
+        );
+        ui.separator();
         self.background_log_ui(ui);
         ui.separator();
         self.debug_timeline_ui(ui);
@@ -1582,7 +1607,7 @@ impl AaruApp {
         ui.separator();
 
         if ui.button("Open log folder").clicked() {
-            thread::spawn(|| {
+            crate::spawn_named("open-log-folder", || {
                 let _ = open_log_dir();
             });
         }

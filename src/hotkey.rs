@@ -104,7 +104,7 @@ fn start() {
     STARTED.call_once(|| {
         // What is in front, looked at now and then: the hook has to be quick, and
         // finding out takes a program's name.
-        std::thread::spawn(|| {
+        crate::spawn_named("front-watch", || {
             loop {
                 let wanted = ENABLED.load(Ordering::Relaxed);
                 if wanted {
@@ -173,7 +173,7 @@ mod platform {
     }
 
     pub fn start_hook() {
-        std::thread::spawn(|| unsafe {
+        crate::spawn_named("keyboard-hook", || unsafe {
             let installed = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook), None, 0);
             if let Err(e) = installed {
                 tracing::error!("unable to listen for the key of the map: {e}");

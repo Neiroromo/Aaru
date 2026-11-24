@@ -128,7 +128,7 @@ fn set(status: &SharedStatus, value: Status) {
 /// Closes what is running, starts HoYoPlay, waits for it, starts the game.  It
 /// runs in a thread of its own; `status` tells how it is going.
 pub fn run(dir: PathBuf, status: SharedStatus, hide_launcher: bool) {
-    std::thread::spawn(move || {
+    crate::spawn_named("game-launch", move || {
         let result = (|| -> Result<(), String> {
             let launcher = dir.join("launcher.exe");
             let game = game_exe(&dir)

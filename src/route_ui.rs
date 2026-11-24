@@ -116,7 +116,7 @@ impl RouteState {
         let (sender, receiver) = channel();
         let teleports = !waypoints.is_empty();
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
+        crate::spawn_named("route-plan", move || {
             let route = route::plan(&stops, &route::Params { waypoints: &waypoints, start }, BUDGET);
             let _ = sender.send(Done { map, route, teleports });
             ctx.request_repaint();

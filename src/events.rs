@@ -312,7 +312,7 @@ pub fn refresh_in_background(ctx: &egui::Context, force: bool) {
         state.error = None;
     }
     let ctx = ctx.clone();
-    std::thread::spawn(move || {
+    crate::spawn_named("events-fetch", move || {
         let result = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

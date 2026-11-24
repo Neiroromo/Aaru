@@ -330,7 +330,7 @@ pub fn start(ctx: &egui::Context) {
         return;
     }
     let ctx = ctx.clone();
-    std::thread::spawn(move || {
+    crate::spawn_named("live-data", move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

@@ -170,7 +170,7 @@ mod platform {
 
     pub fn start(shared: Arc<Shared>) {
         let _ = SHARED.set(shared.clone());
-        std::thread::spawn(move || unsafe {
+        crate::spawn_named("overlay-window", move || unsafe {
             let instance = GetModuleHandleW(None).unwrap_or_default();
             let class = w!("AaruMapOverlay");
             let window_class = WNDCLASSEXW {

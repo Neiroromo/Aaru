@@ -95,7 +95,7 @@ impl GameMap {
         if (watch || align) && !self.shared.started.swap(true, Ordering::Relaxed) {
             let shared = self.shared.clone();
             let ctx = ctx.clone();
-            std::thread::spawn(move || watch_game(shared, ctx));
+            crate::spawn_named("game-map-watch", move || watch_game(shared, ctx));
         }
     }
 
@@ -241,7 +241,9 @@ fn watch_game(shared: Arc<Shared>, ctx: egui::Context) {
                             told_at = Instant::now();
                             ctx.request_repaint();
                         }
-                        std::thread::sleep(Duration::from_millis(7));
+                        // About fifty times a second: the camera turns slower than that, and
+                        // every reading costs a little.
+                        std::thread::sleep(Duration::from_millis(18));
                         continue;
                     }
                     // No arrow of the player there: the minimap is gone (the map was opened,
@@ -688,7 +690,7 @@ mod window {
         pub fn new() -> Self {
             let hwnd = Arc::new(AtomicIsize::new(0));
             let made = hwnd.clone();
-            std::thread::spawn(move || unsafe {
+            crate::spawn_named("game-map-marks-window", move || unsafe {
                 let instance = GetModuleHandleW(None).unwrap_or_default();
                 let class = w!("AaruGameMapMarks");
                 let window_class = WNDCLASSEXW {

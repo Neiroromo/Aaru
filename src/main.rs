@@ -38,6 +38,7 @@ mod events;
 mod events_tab;
 mod debug_timeline;
 mod good;
+mod frame_stats;
 mod game_launch;
 mod heights;
 mod hotkey;
@@ -340,6 +341,8 @@ fn install_panic_hook() {
 fn main() -> eframe::Result {
     // Before anything is written to the data folder: what the program was called before
     // (Irminsul) kept its data in a folder of that name, which is copied to the new one.
+    // The threads of the work spread over the cores are named (as the others are).
+    let _ = rayon::ThreadPoolBuilder::new().thread_name(|n| format!("rayon-{n}")).build_global();
     let migration = migrate::run();
     let (_guard, reload_handle) = tracing_init().unwrap();
     install_panic_hook();
@@ -361,7 +364,7 @@ fn main() -> eframe::Result {
     // After the rights are there: the program that asks for them ends at once.
     session_log::start();
     // The task that started Irminsul when logging on is taken over by one of this name.
-    std::thread::spawn(autostart::migrate_old_task);
+    crate::spawn_named("startup-task", autostart::migrate_old_task);
     housekeeping::start();
     housekeeping::preload();
     tracing::info!("Aaru {} started", env!("CARGO_PKG_VERSION"));
@@ -413,6 +416,19 @@ fn main() -> eframe::Result {
     );
     session_log::finish();
     result
+}
+
+/// Starts a thread with a name (it is shown by the tools that look at what a process does, which
+/// tell which of the threads of the program is busy).
+pub fn spawn_named<F, T>(name: &str, work: F) -> std::thread::JoinHandle<T>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::Builder::new()
+        .name(name.to_owned())
+        .spawn(work)
+        .expect("a thread can not be started")
 }
 
 fn log_dir() -> Result<PathBuf> {

@@ -75,7 +75,7 @@ fn clean(dir: &Path, rules: &[Rule], now: SystemTime) -> Cleaned {
 /// being made, so that the first tab that wants it does not wait (about a tenth of a second,
 /// on the thread that draws).  Each is made once, and whoever wants it first makes it.
 pub fn preload() {
-    std::thread::spawn(|| {
+    crate::spawn_named("preload", || {
         drop(crate::markers::data());
         drop(crate::upgrade_store::data());
         drop(crate::official_chests::all());
@@ -86,7 +86,7 @@ pub fn preload() {
 
 /// Cleans the folders of the program, in a thread of its own (it is of no hurry).
 pub fn start() {
-    std::thread::spawn(|| {
+    crate::spawn_named("housekeeping", || {
         let Ok(logs) = crate::log_dir() else {
             return;
         };

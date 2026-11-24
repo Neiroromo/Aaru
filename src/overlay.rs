@@ -1097,7 +1097,7 @@ fn watch(open: bool, only_in_focus: bool, ctx: &Context) {
     ONLY_IN_FOCUS.store(only_in_focus, Ordering::Relaxed);
     let ctx = ctx.clone();
     STARTED.call_once(|| {
-        std::thread::spawn(move || {
+        crate::spawn_named("overlay-visibility", move || {
             // Whether the thread has hidden the window, which it shows again.
             let mut hidden = false;
             loop {

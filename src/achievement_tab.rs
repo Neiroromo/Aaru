@@ -267,7 +267,7 @@ fn start_update_check(
 ) {
     let (tx, rx) = std_mpsc::channel();
     let ctx = ctx.clone();
-    thread::spawn(move || {
+    crate::spawn_named("achievements-update", move || {
         let _ = tx.send(achievement_data::check_for_update());
         ctx.request_repaint();
     });

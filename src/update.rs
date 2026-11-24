@@ -17,7 +17,7 @@ const APP_UPDATE_CHECK_ENABLED: bool = false;
 
 pub fn check_for_new_version() -> Result<Option<Release>> {
     // This needs to be outside of an async context otherwise it panics.
-    let releases = thread::spawn(move || -> Result<Vec<Release>> {
+    let releases = crate::spawn_named("update-check", move || -> Result<Vec<Release>> {
         let releases = self_update::backends::github::ReleaseList::configure()
             .repo_owner("konkers")
             .repo_name("irminsul")

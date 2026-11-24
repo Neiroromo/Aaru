@@ -79,7 +79,7 @@ impl Covers {
         let (request_tx, request_rx) = mpsc::channel::<String>();
         let (loaded_tx, loaded_rx) = mpsc::channel();
         let worker = ctx.clone();
-        std::thread::spawn(move || {
+        crate::spawn_named("events-cover", move || {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
                 return;
             };

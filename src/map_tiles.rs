@@ -301,8 +301,9 @@ impl MapTiles {
         let (info_tx, info_rx) = tokio_mpsc::unbounded_channel();
         let (loaded_tx, loaded_rx) = mpsc::channel();
         let worker_ctx = ctx.clone();
-        std::thread::spawn(move || {
+        crate::spawn_named("map-tiles-runtime", move || {
             let runtime = tokio::runtime::Builder::new_multi_thread()
+                .thread_name("map-tiles-io")
                 .worker_threads(2)
                 .enable_all()
                 .build();

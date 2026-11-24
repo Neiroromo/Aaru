@@ -204,6 +204,24 @@ struct Made {
     range: i32,
 }
 
+/// What is near: a kind of marker or of enemy, how many of it, and the nearest.
+#[derive(Clone)]
+struct NearMark {
+    /// Told apart by this (the kind of marker, or the family of the enemy).
+    key: (bool, u32),
+    label: u32,
+    name: Option<&'static str>,
+    across: f32,
+    /// How much higher it is, if known.
+    up: Option<f32>,
+    /// From the player to the nearest, in the game's x and z.
+    to: [f32; 2],
+    count: usize,
+}
+
+/// What the markers that are near were worked out for.
+type NearKey = (u32, u32, u32, i32, i32, u64, u64, i32);
+
 pub struct MapOverlay {
     pub settings: MapOverlaySettings,
     tiles: MapTiles,
@@ -254,6 +272,8 @@ pub struct MapOverlay {
     near_moving: bool,
     /// When the camera was last written to the log (it is, now and then, to check it by).
     camera_logged: Option<Instant>,
+    /// The markers that were near, for the place and the choice they were worked out for.
+    near_cache: Option<(NearKey, Vec<NearMark>)>,
 }
 
 impl MapOverlay {
@@ -308,6 +328,7 @@ impl MapOverlay {
             near_made: None,
             near_moving: false,
             camera_logged: None,
+            near_cache: None,
         }
     }
 
@@ -727,19 +748,6 @@ impl MapOverlay {
         russian: bool,
     ) {
         use crate::game_map_panel::NearRow;
-        /// What is near: a kind of marker or of enemy, how many of it, and the nearest.
-        struct Near {
-            /// Told apart by this (the kind of marker, or the family of the enemy).
-            key: (bool, u32),
-            label: u32,
-            name: Option<&'static str>,
-            across: f32,
-            /// How much higher it is, if known.
-            up: Option<f32>,
-            /// From the player to the nearest, in the game's x and z.
-            to: [f32; 2],
-            count: usize,
-        }
         let mut rows: Vec<NearRow> = Vec::new();
         let shown = self.settings.nearby_mobs
             && !shared.key_lost
@@ -758,7 +766,7 @@ impl MapOverlay {
             }
             let data = markers::data();
             let radius = self.settings.nearby_metres;
-            let mut near: Vec<Near> = Vec::new();
+            let mut near: Vec<NearMark> = Vec::new();
             // The enemies that are alive: one line for the variants of a monster (the ids differ
             // in the last digits).
             for mob in &shared.mobs.alive {
@@ -782,13 +790,32 @@ impl MapOverlay {
                             (kind.across, kind.up, kind.to) = (across, Some(up), to);
                         }
                     }
-                    None => near.push(Near { key: (true, family), label, name: crate::mob_watch::name_of(family, true).map(|_| ""), across, up: Some(up), to, count: 1 }),
+                    None => near.push(NearMark { key: (true, family), label, name: crate::mob_watch::name_of(family, true).map(|_| ""), across, up: Some(up), to, count: 1 }),
                 }
             }
             // The markers of the map that are chosen: what is not collected (or opened), the
             // nearest of each kind, the way to it and how much higher or lower, where the game
             // has told the height.
             if self.settings.nearby_marks && player.map != 0 {
+                // What is near does not change while the player stands (or turns): it is worked out
+                // again when they moved a couple of metres, or what is shown or alive changed, not
+                // for every draw (it goes over every marker of the chosen kinds).
+                let key = (
+                    player.scene,
+                    player.map,
+                    player.floor,
+                    (player.position[0] / 2.).round() as i32,
+                    (player.position[2] / 2.).round() as i32,
+                    shared.version,
+                    shared.mobs.version,
+                    radius as i32,
+                );
+                if let Some((known, cached)) = &self.near_cache
+                    && *known == key
+                {
+                    near.extend(cached.iter().cloned());
+                } else {
+                let mut fresh: Vec<NearMark> = Vec::new();
                 let enemies_listed: std::collections::HashSet<u32> = near.iter().map(|kind| kind.label).collect();
                 let scale = player.scale.max(0.1);
                 let reach = radius * scale;
@@ -853,7 +880,10 @@ impl MapOverlay {
                     let to = [-delta[1] / scale, -delta[0] / scale];
                     let up = crate::heights::estimate(player.scene, player.position[0] + to[0], player.position[2] + to[1])
                         .map(|height| height - player.position[1]);
-                    near.push(Near { key: (false, label), label, name: None, across: distance / scale, up, to, count });
+                    fresh.push(NearMark { key: (false, label), label, name: None, across: distance / scale, up, to, count });
+                }
+                near.extend(fresh.iter().cloned());
+                self.near_cache = Some((key, fresh));
                 }
             }
             near.sort_by(|a, b| a.across.total_cmp(&b.across));
